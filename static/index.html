@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>面试辅助 · Teleprompter</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#161a22; --panel2:#1c212c; --line:#2a3040;
+    --fg:#e8eaf0; --dim:#9aa3b5; --accent:#ffb02e; --green:#34d17b; --red:#ff5c5c;
+    --blue:#6aa1ff;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--bg);color:var(--fg);
+    font-family:"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;
+    display:flex;flex-direction:column;overflow:hidden;
+  }
+  header{
+    display:flex;align-items:center;gap:12px;padding:10px 16px;
+    background:var(--panel);border-bottom:1px solid var(--line);flex:0 0 auto;
+  }
+  header .title{font-weight:700;font-size:18px}
+  .pill{font-size:12px;color:var(--dim)}
+  select,button{
+    background:var(--panel2);color:var(--fg);border:1px solid var(--line);
+    border-radius:8px;padding:7px 14px;font-size:14px;cursor:pointer;
+  }
+  button:hover{border-color:var(--accent);color:#fff}
+  button.primary{background:#3a6df0;border-color:#3a6df0;font-weight:700}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  #levelWrap{display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
+  #levelBarOuter{width:110px;height:12px;background:#0a0c10;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  #levelBar{height:100%;width:0%;background:linear-gradient(90deg,#2ecc71,#f1c40f,#e74c3c);transition:width .08s}
+  /* 麦克风电平条 */
+  .lvlsep{opacity:.3;margin:0 2px}
+  #micBarOuter{width:90px;height:10px;background:#0a0c10;border:1px solid #2a5a3a;border-radius:6px;overflow:hidden}
+  #micBar{height:100%;width:0%;background:linear-gradient(90deg,#3498db,#2ecc71);transition:width .08s}
+  #micDot{color:var(--dim);transition:.15s}
+  #micDot.on{color:#3498db}
+  #micDot.spk{color:var(--green);animation:pulse .5s infinite alternate}
+  #stateDot{width:10px;height:10px;border-radius:50%;background:#555;display:inline-block}
+  #stateDot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+  #stateDot.speaking{animation:pulse .6s infinite alternate}
+  @keyframes pulse{from{transform:scale(1)}to{transform:scale(1.5)}}
+
+  #feed{flex:1 1 auto;overflow-y:auto;padding:16px 22px;scroll-behavior:smooth}
+  .qa{margin-bottom:18px;max-width:1100px}
+  .qbox{
+    background:linear-gradient(90deg,rgba(255,176,46,.16),transparent);
+    border-left:4px solid var(--accent);padding:10px 14px;border-radius:0 10px 10px 0;
+    font-size:20px;line-height:1.5;font-weight:600;color:#ffe1a8;
+  }
+  .qbox .t{font-size:12px;color:var(--dim);font-weight:400;margin-right:8px}
+
+  /* 快速卡 */
+  .quickcard{
+    margin-top:8px;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:14px 18px;font-size:19px;line-height:1.7;
+  }
+  .quickcard .opener{font-size:21px;color:#fff;font-weight:600;line-height:1.55}
+  .quickcard .opener .tag,
+  .quickcard .pt .tag{
+    display:inline-block;font-size:11px;font-weight:700;color:#0f1115;background:var(--green);
+    border-radius:4px;padding:1px 6px;margin-right:8px;vertical-align:2px;
+  }
+  .quickcard .pt .tag{background:var(--blue)}
+  .quickcard .pt{margin-top:6px;color:#dbe2f0}
+  .quickcard.pending{color:var(--dim);font-style:italic}
+
+  /* 展开方向 */
+  .dirrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .dirrow .lbl{align-self:center;font-size:12px;color:var(--dim)}
+  .chip{
+    background:var(--panel2);border:1px solid var(--line);border-radius:16px;
+    padding:6px 14px;font-size:14px;cursor:pointer;color:var(--fg);transition:.15s;
+  }
+  .chip:hover{border-color:var(--accent);background:#262d3b}
+  .chip small{display:block;font-size:11px;color:var(--dim);max-width:230px;white-space:normal}
+  .chip.full{border-color:#3a6df0;color:#9dbaff}
+
+  /* 深挖子卡 */
+  .subcard{
+    margin-top:10px;background:#141a14;border:1px solid #274a2b;
+    border-radius:10px;padding:12px 16px;font-size:17px;line-height:1.75;white-space:pre-wrap;
+  }
+  .subcard .hd{font-size:12px;color:var(--green);margin-bottom:4px}
+  .subcard b{color:var(--accent)}
+  .subcard.pending{color:var(--dim);font-style:italic}
+
+  .sysmsg{color:var(--dim);font-size:13px;margin:6px 0}
+  .sysmsg.err{color:var(--red)}
+
+  footer{
+    flex:0 0 auto;display:flex;gap:10px;padding:10px 16px;
+    background:var(--panel);border-top:1px solid var(--line);
+  }
+  #manualInput{
+    flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+    border-radius:8px;padding:10px 14px;font-size:15px;outline:none;
+  }
+  #manualInput:focus{border-color:var(--accent)}
+  .hint{font-size:11px;color:#667;align-self:center;text-align:right;line-height:1.5}
+
+  /* 对话气泡：面试官(扬声器)左蓝 / 候选人(麦克风)右绿 */
+  .bubrow{display:flex;margin:4px 0}
+  .bubrow.ir{justify-content:flex-start}
+  .bubrow.me{justify-content:flex-end}
+  .bub{
+    max-width:78%;padding:8px 13px;border-radius:12px;font-size:18px;line-height:1.5;
+    position:relative;white-space:pre-wrap;
+  }
+  .bub .who{display:block;font-size:10px;opacity:.6;margin-bottom:2px;font-weight:600}
+  .bub.ir{
+    background:#16233a;border:1px solid #2b4a75;border-bottom-left-radius:3px;
+    color:#cfe0ff;
+  }
+  .bub.ir .who{color:#5b9aff}
+  .bub.me{
+    background:#14341f;border:1px solid #2e7a45;border-bottom-right-radius:3px;
+    color:#d4f5df;
+  }
+  .bub.me .who{color:#4ade80}
+  .bub .live{font-size:11px;color:#888;margin-left:6px}
+  .bub.me .okchip{display:block;margin-top:5px;font-size:10px;color:rgba(126,226,168,.55);
+    text-align:right;font-weight:400;letter-spacing:.3px}
+
+  /* 知识库管理面板 */
+  #kbOverlay{
+    position:fixed;inset:0;background:rgba(5,8,14,.7);z-index:50;
+    display:none;align-items:flex-start;justify-content:center;padding-top:60px;
+  }
+  #kbOverlay.show{display:flex}
+  #kbPanel{
+    width:min(680px,94vw);max-height:76vh;overflow-y:auto;
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:18px 20px;
+  }
+  #kbPanel h3{margin:2px 0 12px;font-size:17px}
+  .kbgrp{margin-bottom:16px}
+  .kbgrp h4{font-size:13px;color:var(--dim);margin:0 0 6px;display:flex;align-items:center;gap:8px}
+  .kbgrp h4 .cnt{color:var(--accent)}
+  .kbrow{
+    display:flex;align-items:center;gap:8px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin:4px 0;
+    font-size:13px;
+  }
+  .kbrow .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .kbrow .meta{color:var(--dim);font-size:11px;white-space:nowrap}
+  .kbrow.ok{border-left:3px solid var(--green)}
+  .kbrow.warn{border-left:3px solid var(--accent)}
+  .kbrow button{background:none;border:none;color:var(--red);cursor:pointer;font-size:13px;padding:2px 6px}
+  .kbrow button:hover{background:#3a1d1d;border-radius:4px}
+  .kbupload{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;align-items:center}
+  .kbupload .btn{background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+    border-radius:8px;padding:5px 12px;font-size:12px;cursor:pointer}
+  .kbupload .btn:hover{border-color:var(--accent)}
+  #kbClose{float:right;background:none;border:none;color:var(--dim);font-size:18px;cursor:pointer}
+</style>
+</head>
+<body>
+<header>
+  <span id="stateDot"></span>
+  <span class="title">🎙 面试辅助</span>
+  <span id="resumeBadge" class="pill" style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">简历检测中…</span>
+  <button id="btnResume" title="重新上传/更换简历(PDF/MD/TXT)，即时生效">📄 换简历</button>
+  <select id="deviceSel" title="面试官声音(系统回环)设备"><option value="">扬声器(默认)</option></select>
+  <select id="micSel" title="你自己的麦克风(转写你的回答供AI参考，可选)"><option value="">🎤 不录我</option></select>
+  <button id="btnStart" class="primary">▶ 监听</button>
+  <button id="btnStop" disabled>⏸ 停止</button>
+  <button id="btnRecal" title="在安静时点击，重新校准噪声底">🎚 校准</button>
+  <button id="btnClear" title="清空对话与AI上下文 (F9)">🗑 清空 (F9)</button>
+  <button id="btnKB" title="知识库：简历/论文/辅助材料管理">🧠 知识库</button>
+  <div id="levelWrap">
+    <span class="pill" id="micDot" title="麦克风状态">🎤</span>
+    <div id="micBarOuter"><div id="micBar"></div></div>
+    <span class="pill" id="micDbLabel">-- dB</span>
+    <span class="lvlsep">│</span>
+    <span class="pill" id="dbLabel">🔊 --</span>
+    <div id="levelBarOuter"><div id="levelBar"></div></div>
+    <span class="pill" id="floorLabel" title="面试官通道">-floor -thr</span>
+  </div>
+</header>
+
+<div id="feed">
+  <div class="sysmsg">就绪。监听开启后：面试官提问 → <b>1.1秒静音判定成题</b>（慢语速/停顿不再被拆成两题）→ 快速卡（开口句+要点）→ 展开方向按钮补细节。<br>
+  建议在下拉框选你的 <b>🎤 麦克风</b>：你的回答也会被转写，AI 出卡会贴合你已说的内容（只存本机，不触发AI抢答）。<br>
+  兜底：问题手动敲下方输入框。**F8**=重答上一题，**F9**=清空。</div>
+  <div id="selfBar" class="sysmsg" style="display:none;color:#7ee2a8"></div>
+</div>
+
+<footer>
+  <input id="manualInput" placeholder="手动输入问题（自动监听失效时的兜底）… 回车发送">
+  <button id="btnAsk">问</button>
+  <div class="hint">面板仅本机显示<br>会议软件看不到此窗口</div>
+</footer>
+
+<!-- 知识库管理面板 -->
+<div id="kbOverlay">
+  <div id="kbPanel">
+    <button id="kbClose" title="关闭">✕</button>
+    <h3>🧠 知识库 · AI 的背景环境</h3>
+    <div class="kbgrp" id="kbResumeGrp"></div>
+    <div class="kbgrp" id="kbPaperGrp"></div>
+    <div class="kbgrp" id="kbMatGrp"></div>
+  </div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+let es=null,lastQuestion="",curQA=null;
+
+function fmtLevel(db,floor,enter){
+  const lo=(floor??-70),hi=(enter??lo)+25;
+  let pct=Math.round((Math.max(db,-90)-lo)/(hi-lo)*100);
+  pct=Math.max(0,Math.min(100,pct));
+  $('levelBar').style.width=pct+'%';
+  $('dbLabel').textContent='🔊 '+db.toFixed(0);
+  $('floorLabel').textContent=`${floor?.toFixed(0)||'--'} / ${enter?.toFixed(0)||'--'}`;
+}
+/* 麦克风 dB 条：定标 -95..-25 更直观（mic 说话通常在 -50~-25） */
+function fmtMicLevel(db,speaking,active){
+  let pct=Math.round((Math.max(db,-95)-(-95))/70*100);
+  pct=Math.max(0,Math.min(100,pct));
+  $('micBar').style.width=pct+'%';
+  $('micDbLabel').textContent=db.toFixed(0)+' dB';
+  $('micDot').className='pill'+(active?' on':'')+(speaking?' spk':'');
+}
+
+async function refreshState(){
+  try{
+    const r=await fetch('/api/state');const s=await r.json();
+    const sel=$('deviceSel');
+    if(sel.options.length<=1&&s.devices&&s.devices.length){
+      s.devices.forEach(d=>{
+        const o=document.createElement('option');o.value=d.index;o.textContent='🔊 '+d.name;sel.appendChild(o);
+      });
+    }
+    const msel=$('micSel');
+    if(msel.options.length<=1&&s.input_devices&&s.input_devices.length){
+      s.input_devices.forEach(d=>{
+        const o=document.createElement('option');o.value=d.index;
+        o.textContent='🎤 '+d.name.slice(0,26)+(d.hostapi&&d.hostapi.includes('WASAPI')?'':' ·'+d.hostapi);
+        msel.appendChild(o);
+      });
+      if(s.self_listening){msel.value=s.self_engine?.device_index??'';}
+    }
+    // 麦克风电平条 + 状态
+    if(s.self_engine){
+      fmtMicLevel(s.self_engine.last_level_db ?? -100,
+                  s.self_engine.speaking, s.self_listening);
+    }else{
+      fmtMicLevel(-100,false,false);
+    }
+    // 我的发言浮条
+    if(s.self_listening){
+      $('selfBar').style.display='block';
+      $('selfBar').textContent='🎤 我(最近): '+(s.self_recent||'（开始说话后这里显示你的转写）');
+    }else{
+      $('selfBar').style.display='none';
+    }
+    if(s.resume){
+      const b=$('resumeBadge');
+      if(s.resume.loaded){
+        b.textContent='📄 '+((s.resume.source||'').slice(0,16))+' · '+(s.resume.chars||0)+'字';
+        b.style.color='var(--green)';
+        b.title='来源: '+(s.resume.origin||s.resume.source)+'\n加载于 '+(s.resume.loaded_at||'')+'\nAI 作答将引用这份简历的真实项目与数据';
+        if(!window._resumeAnnounced){window._resumeAnnounced=true;
+          addSys('✅ 简历基础环境已校准: '+s.resume.source+'('+s.resume.chars+'字)');}
+      }else{
+        b.textContent='⚠ 简历未加载';b.style.color='var(--red)';b.title='点「换简历」重试';
+      }
+    }
+    if(s.listening){
+      const e=s.engine||{};
+      fmtLevel(e.last_level_db??-100,e.noise_floor_db,e.speech_enter_db);
+      $('stateDot').className=e.speaking?'on speaking':'on';
+    }else{
+      $('stateDot').className='';
+    }
+  }catch(e){}
+}
+
+function addSys(msg,isErr){
+  const d=document.createElement('div');
+  d.className='sysmsg'+(isErr?' err':'');d.textContent=msg;
+  $('feed').appendChild(d);d.scrollIntoView({block:'end'});
+}
+
+const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const md=s=>esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');
+
+/* 解析快速卡的行式协议：【开口】【要点】【方向】名 ::: 说明 */
+function parseQuick(raw){
+  const out={opener:'',points:[],dirs:[]};
+  raw.split('\n').forEach(line=>{
+    const t=line.trim();
+    if(t.startsWith('【开口】'))out.opener=t.slice(4).trim();
+    else if(t.startsWith('【要点】'))out.points.push(t.slice(4).trim());
+    else if(t.startsWith('【方向】')){
+      const body=t.slice(4).trim();const seg=body.split(':::');
+      out.dirs.push({name:(seg[0]||'').trim(),desc:(seg[1]||'').trim()});
+    }
+  });
+  return out;
+}
+
+function renderQuick(box,raw,done){
+  const p=parseQuick(raw);
+  let h='';
+  if(p.opener)h+=`<div class="opener"><span class="tag">开口照说</span>${esc(p.opener)}</div>`;
+  for(const pt of p.points)h+=`<div class="pt"><span class="tag">要点</span>${esc(pt)}</div>`;
+  if(!p.opener&&!p.points.length)h=esc(raw);   // 流式前几个token还没成行，原样显示
+  box.classList.remove('pending');
+  box.innerHTML=h;
+  if(done)renderDirs(box.parentElement,p.dirs);
+}
+
+function renderDirs(qaEl,dirs){
+  const old=qaEl.querySelector('.dirrow');if(old)old.remove();
+  if(!dirs.length)return;
+  const row=document.createElement('div');row.className='dirrow';
+  row.innerHTML='<span class="lbl">↳ 深挖：</span>';
+  dirs.forEach(d=>{
+    const c=document.createElement('button');c.className='chip';
+    c.innerHTML=`${esc(d.name)}<small>${esc(d.desc)}</small>`;
+    c.onclick=()=>askDetail(d.name,qaEl,c);
+    row.appendChild(c);
+  });
+  const full=document.createElement('button');full.className='chip full';
+  full.innerHTML='完整版<small>S·A·R 全结构 + 追问</small>';
+  full.onclick=()=>askDetail('完整版',qaEl,full);
+  row.appendChild(full);
+  qaEl.appendChild(row);
+}
+
+/* ---------- 两级事件流 ---------- */
+function addBubble(text, who, side, ts){
+  /* who: '面试官'/'我'; side: ir左/me右
+     我的语音 = 纯历史记录：只加『✓已记入上下文』角标，永不附带 AI 回复 */
+  const row=document.createElement('div');
+  row.className='bubrow '+side;
+  const chip=(who==='我')
+    ?`<span class="okchip" title="只存本机历史，并作为后续出卡的上下文；不会对你生成 AI 建议">✓ 已记录 · 作上下文</span>`
+    :'';
+  row.innerHTML=`<div class="bub ${side}"><span class="who">${who} ${ts||''}</span>${esc(text)}${chip}</div>`;
+  $('feed').appendChild(row);row.scrollIntoView({block:'end'});
+  return row.querySelector('.bub');
+}
+
+function beginQA(q,ts){
+  curQA={};
+  const qa=document.createElement('div');qa.className='qa';
+  qa.innerHTML=`<div class="qbox"><span class="t">${ts}</span>${md(q)}</div>
+    <div class="quickcard pending">思考中…</div>`;
+  $('feed').appendChild(qa);qa.scrollIntoView({block:'end'});
+  Object.assign(curQA,{el:qa,card:qa.querySelector('.quickcard'),raw:'',mode:'quick',subs:{}});
+  return curQA;
+}
+
+function beginSub(qa,direction,ts){
+  const sub=document.createElement('div');sub.className='subcard pending';
+  sub.innerHTML=`<div class="hd">🔎 深挖 · ${esc(direction)} ${ts||''}</div>生成中…`;
+  qa.appendChild(sub);sub.scrollIntoView({block:'end'});
+  qa.subs[direction]=sub;
+  qa.raw='';qa.card=null;           // 后续 delta 进子卡
+  qa.activeSub=sub;
+  return sub;
+}
+
+function connectSSE(){
+  if(es)es.close();
+  es=new EventSource('/api/events');
+  es.onmessage=m=>{
+    let ev;try{ev=JSON.parse(m.data)}catch(e){return}
+    const t=ev.type;
+    if(t==='question'){
+      const spk=ev.speaker||'interviewer';
+      if(spk==='self'){
+        // 麦克风通道：我的发言 → 右绿气泡，仅记录不触发答题
+        window._lastSelfBub=addBubble(ev.text,'我','me',ev.at||'');
+      }else if(ev.manual){
+        // 手动输入问题 → 直接建卡（保留原有快速提问路径）
+        window._voiceQ=false;
+        lastQuestion=ev.text;beginQA(ev.text,ev.at||'');
+      }else{
+        // 扬声器通道：面试官发言 → 左蓝气泡；合并成题时由 answer_start 出卡
+        window._voiceQ=true;
+        lastQuestion=ev.text;
+        const bub=addBubble(ev.text,'面试官','ir',ev.at||'');
+        // 若上一道题还没出卡(防抖等待中)，记下气泡引用供合并后更新
+        window._pendingBub=bub;
+      }
+    }else if(t==='answer_start'){
+      // 合并后的完整问题：更新最近一个面试官气泡文本（若 VAD 拆段）
+      let anchor=null;
+      if(ev.question){
+        lastQuestion=ev.question;
+        anchor=window._pendingBub;
+        if(anchor)anchor.textContent=esc(ev.question);
+        window._pendingBub=null;
+      }
+      // 语音触发出题 → 总开新卡；手动题 → 更新已有卡
+      if(window._voiceQ){
+        const qaObj=beginQA(ev.question||lastQuestion||'',ev.at||'');
+        // AI 卡插到面试官气泡正下方：卡在上、我的口述气泡在下，不会显得 AI 在评点我的发言
+        if(anchor&&anchor.isConnected&&qaObj.el.isConnected){
+          anchor.insertAdjacentElement('afterend',qaObj.el);
+        }
+      }else if(curQA&&curQA.el&&curQA.el.isConnected){
+        curQA.raw='';
+        curQA.card.classList.add('pending');
+        curQA.card.textContent='思考中…';
+        const oldDir=curQA.el.querySelector('.dirrow');if(oldDir)oldDir.remove();
+        const qb=curQA.el.querySelector('.qbox');
+        if(qb&&ev.question)qb.innerHTML=`<span class="t">${ev.at||''}</span>${md(ev.question)}`;
+      }else{
+        beginQA(ev.question||lastQuestion||'',ev.at||'');
+      }
+    }else if(t==='detail_start'){
+      const target=(curQA&&!curQA.subs?.[ev.direction])?curQA:
+                   (document.querySelectorAll('.qa:last-child')[0]||{});
+      if(target&&target.el)beginSub(target.el,ev.direction,ev.at);
+      else if(curQA)beginSub(curQA.el,ev.direction,ev.at);
+    }else if(t==='answer_delta'){
+      if(!curQA)return;
+      curQA.raw+=ev.delta||'';
+      if(curQA.mode==='detail'&&curQA.activeSub){
+        curQA.activeSub.classList.remove('pending');
+        curQA.activeSub.innerHTML=`<div class="hd">🔎 深挖</div>`+md(curQA.raw);
+      }else{
+        renderQuick(curQA.card,curQA.raw,false);
+      }
+      curQA.el.scrollIntoView({block:'end'});
+    }else if(t==='answer_done'){
+      if(!curQA)return;
+      if(ev.level==='detail'){
+        curQA.mode='quick';
+        if(curQA.activeSub){
+          curQA.activeSub.classList.remove('pending');
+          curQA.activeSub.innerHTML=`<div class="hd">🔎 深挖 · ${esc(ev.direction||'')}</div>`+md(ev.full);
+          curQA.activeSub=null;
+        }
+      }else{
+        curQA.mode='quick';       // 快速卡完成，等待可能的深挖
+        renderQuick(curQA.card,ev.full,true);
+      }
+    }else if(t==='status'){
+      addSys((ev.level==='error'?'⚠ ':'')+ev.message,ev.level==='error');
+    }else if(t==='calibrated'){
+      addSys(`✅ 校准完成：噪声底 ${ev.noise_floor}dB，触发阈值 ${ev.enter}dB`);
+    }
+  };
+  es.onerror=()=>{/*浏览器自动重连*/};
+}
+
+async function askDetail(direction,qaEl,chipEl){
+  // 已有同向子卡则不再重复请求
+  if(qaEl.subs&&qaEl.subs[direction])return;
+  // 禁用本行所有芯片，防连点
+  const row=chipEl.closest('.dirrow');
+  row.querySelectorAll('.chip').forEach(c=>c.disabled=true);
+  const r=await fetch('/api/detail',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({direction})});
+  const j=await r.json();
+  if(!j.ok){
+    addSys('⚠ 深挖失败: '+(j.error||'?'),true);
+    row.querySelectorAll('.chip').forEach(c=>c.disabled=false);
+  }else{
+    curQA&&curQA.el===qaEl&&(curQA.mode='detail');
+    if(!curQA||curQA.el!==qaEl){
+      // 点击的不是最新题（少见），给个提示
+      addSys('深挖请求已发送：'+direction);
+    }
+  }
+}
+
+/* ---------- 控制区 ---------- */
+$('btnStart').onclick=async()=>{
+  const idx=$('deviceSel').value;
+  const midx=$('micSel').value;
+  const body={source:'loopback'};
+  if(idx!=='')body.device_index=parseInt(idx);
+  const r=await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)});
+  const j=await r.json();
+  if(j.ok){$('btnStart').disabled=true;$('btnStop').disabled=false;}
+  else addSys('启动失败: '+(j.error||'?'),true);
+  // 麦克风选了就一并启动（失败不阻塞，只提示）
+  if(midx!==''){
+    const r2=await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({source:'mic',device_index:parseInt(midx)})});
+    const j2=await r2.json();
+    if(j2.ok)addSys('🎤 麦克风监听已开启：你的回答将转写并作为AI上下文（浮条可见）');
+    else addSys('⚠ 麦克风启动失败: '+(j2.error||'?')+'（不影响面试官侧）',true);
+  }
+};
+$('btnStop').onclick=async()=>{
+  await fetch('/api/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  await fetch('/api/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:'mic'})});
+  $('btnStart').disabled=false;$('btnStop').disabled=true;
+};
+$('btnRecal').onclick=()=>fetch('/api/recalibrate',{method:'POST'});
+$('btnResume').onclick=async()=>{
+  const inp=document.createElement('input');
+  inp.type='file';inp.accept='.pdf,.md,.txt';
+  inp.onchange=async()=>{
+    if(!inp.files||!inp.files[0])return;
+    const fd=new FormData();fd.append('file',inp.files[0]);
+    addSys('正在解析简历 '+inp.files[0].name+' …');
+    const r=await fetch('/api/resume/upload',{method:'POST',body:fd});
+    const j=await r.json();
+    window._resumeAnnounced=false;
+    if(j.ok){addSys('✅ 简历已更新: '+j.meta.source+'('+j.meta.chars+'字)，即刻生效');}
+    else{addSys('⚠ 简历解析失败: '+(j.error||'?')+' — 已保留原简历',true);}
+  };
+  inp.click();
+};
+$('btnClear').onclick=async()=>{
+  if(!confirm('清空屏幕和 AI 对话记忆？'))return;
+  await fetch('/api/clear',{method:'POST'});
+  $('feed').innerHTML='';addSys('已清空，开始新一轮');
+};
+
+/* ---------- 知识库管理面板 ---------- */
+let kbUpTimer=null;
+function kbRowHTML(nm,meta,cls){
+  return `<div class="kbrow ${cls}"><span class="nm">${esc(nm)}</span><span class="meta">${esc(meta)}</span></div>`;
+}
+async function refreshKB(){
+  const r=await fetch('/api/state');const s=await r.json();
+  // 简历
+  let html='<h4>📄 简历 <span class="cnt">'+(s.resume.loaded?'· '+s.resume.source+' ('+s.resume.chars+'字)':'· 未加载')+'</span></h4>';
+  if(s.resume.loaded){
+    html+=kbRowHTML(s.resume.source,'来源: '+(s.resume.note||'auto')+' | 加载于 '+s.resume.loaded_at,'ok');
+  }else{
+    html+='<div class="sysmsg err">未找到简历——把 PDF 放桌面重启，或点下方按钮上传</div>';
+  }
+  html+=`<div class="kbupload"><button class="btn" onclick="kbUploadResume()">⬆ 上传/更换简历(PDF/MD/TXT)</button></div>`;
+  $('kbResumeGrp').innerHTML=html;
+  // 论文
+  const pp=s.papers||{count:0,items:[]};
+  html='<h4>📚 论文 <span class="cnt">'+pp.count+' 篇</span></h4>';
+  if(pp.items.length){
+    for(const it of pp.items){
+      html+=`<div class="kbrow ${it.has_digest?'ok':'warn'}"><span class="nm">${esc(it.source)}</span>
+        <span class="meta">${it.has_digest?'已摘要':'摘要中…'}</span></div>`;
+    }
+  }else{
+    html+='<div class="sysmsg">无论文（桌面 paper_paths 自动发现或手动上传）</div>';
+  }
+  html+=`<div class="kbupload"><button class="btn" onclick="kbUploadPaper()">⬆ 上传论文(PDF)</button></div>`;
+  $('kbPaperGrp').innerHTML=html;
+  // 材料
+  const mm=s.materials||{count:0,items:[]};
+  html='<h4>🧩 辅助材料 <span class="cnt">'+mm.count+' 份</span></h4>';
+  if(mm.items.length){
+    for(const it of mm.items){
+      html+=`<div class="kbrow ${it.has_digest?'ok':'warn'}"><span class="nm">${esc(it.source)}</span>
+        <span class="meta">${it.chars}字 · ${it.has_digest?'已摘要':'摘要中…'}</span>
+        <button title="删除" onclick="kbRemoveMat('${it.key}')">🗑</button></div>`;
+    }
+  }else{
+    html+='<div class="sysmsg">无辅助材料——项目文档/方案/代码/参考资料传这里，AI 可引用</div>';
+  }
+  html+=`<div class="kbupload"><button class="btn" onclick="kbUploadMat()">⬆ 上传材料(文档/代码/多选)</button></div>`;
+  $('kbMatGrp').innerHTML=html;
+}
+function pickFiles(accept,multi,cb){
+  const inp=document.createElement('input');
+  inp.type='file';inp.accept=accept;if(multi)inp.multiple=true;
+  inp.onchange=async()=>{ if(!inp.files||!inp.files.length)return;
+    for(const f of inp.files){ cb(f); }
+  };
+  inp.click();
+}
+function uploadOne(url,f,label){
+  const fd=new FormData();fd.append('file',f);
+  addSys(label+' '+f.name+' …');
+  fetch(url,{method:'POST',body:fd}).then(r=>r.json()).then(j=>{
+    if(j.ok)addSys('✅ '+label+'成功: '+f.name);
+    else addSys('⚠ '+label+'失败: '+(j.error||'?')+' — '+f.name,true);
+    refreshKB();
+  }).catch(e=>{addSys('⚠ 网络错误: '+e,true);});
+}
+function kbUploadResume(){ pickFiles('.pdf,.md,.txt',false,f=>uploadOne('/api/resume/upload',f,'简历上传')); }
+function kbUploadPaper(){ pickFiles('.pdf',false,f=>uploadOne('/api/paper/upload',f,'论文上传')); }
+function kbUploadMat(){ pickFiles('.pdf,.md,.txt,.py,.js,.ts,.java,.go,.c,.cpp,.rs,.json,.yaml,.yml,.sql,.html,.css,.toml,.sh,.csv',true,
+    f=>uploadOne('/api/material/upload',f,'材料上传')); }
+async function kbRemoveMat(key){
+  if(!confirm('删除这份材料？(不影响已保存的历史)'))return;
+  const r=await fetch('/api/material/remove',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({key})});
+  const j=await r.json();
+  if(j.ok){addSys('✅ 材料已删除');refreshKB();}else{addSys('⚠ 删除失败: '+(j.error||'?'),true);}
+}
+$('btnKB').onclick=()=>{ $('kbOverlay').classList.add('show'); refreshKB(); };
+$('kbClose').onclick=()=>$('kbOverlay').classList.remove('show');
+$('kbOverlay').addEventListener('click',e=>{ if(e.target.id==='kbOverlay')$('kbOverlay').classList.remove('show'); });
+
+async function askManual(){
+  const t=$('manualInput').value.trim();if(!t)return;
+  $('manualInput').value='';
+  await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})});
+}
+$('btnAsk').onclick=askManual;
+$('manualInput').addEventListener('keydown',e=>{if(e.key==='Enter')askManual();});
+
+document.addEventListener('keydown',e=>{
+  if(e.key==='F8'&&lastQuestion){
+    fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text:lastQuestion})});
+    e.preventDefault();
+  }else if(e.key==='F9'){$('btnClear').click();e.preventDefault();}
+});
+
+// init
+fetch('/api/state').then(r=>r.json()).then(async s=>{
+  if(!s.listening){
+    const r=await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({source:'loopback'})});
+    const j=await r.json();
+    if(j.ok){$('btnStart').disabled=true;$('btnStop').disabled=false;
+      addSys('已自动开启面试官侧监听: '+j.device);}
+  }
+});
+refreshState();setInterval(refreshState,800);
+connectSSE();
+</script>
+</body>
+</html>

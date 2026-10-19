@@ -1,0 +1,40 @@
+# Local configuration and secrets
+config.json
+.env
+*.local.json
+
+# Runtime and personal data (never commit this directory)
+data/
+resume.md
+
+# Local environments and generated files
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.log
+*.wav
+.pytest_cache/
+
+# Personal diagnostics and legacy reports (not part of source release)
+agent_helper_test.py
+diag_*.py
+e2e_app_test.py
+probe_reasoning.py
+rehearse.py
+test_fixes.py
+三期计划-知识库持久化.md
+使用说明.md
+项目总结报告.md
+
+# Temporary exports and uploads
+*.md.tmp
+paper_up.*
+mat_up.*
+resume_up.*
+
+# Editor/OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,40 @@
+{
+  "resume_path": "",
+  "paper_paths": [],
+  "material_paths": [],
+  "host": "127.0.0.1",
+  "port": 8527,
+  "merge": {
+    "wait_ms": 1100,
+    "continuation_ms": 0
+  },
+  "stt": {
+    "url": "http://127.0.0.1:8760/v1",
+    "model": "large-v3-turbo",
+    "api_key_env": [],
+    "timeout": 30
+  },
+  "llm": {
+    "base_url": "https://api.example.com/v1",
+    "quick_model": "",
+    "detail_model": "",
+    "model": "",
+    "api_key_env": ["LLM_API_KEY"],
+    "disable_thinking": true,
+    "temperature": 0.6,
+    "max_tokens": 800,
+    "fallback_base_url": "",
+    "fallback_model": "",
+    "fallback_api_key_env": ["LLM_FALLBACK_API_KEY"]
+  },
+  "audio": {
+    "sample_rate": 16000,
+    "frame_ms": 100,
+    "silence_end_ms": 900,
+    "min_segment_ms": 700,
+    "max_segment_ms": 18000,
+    "speech_threshold_offset_db": 11.0,
+    "absolute_speech_db": -44.0,
+    "merge_quiet_ms": 1600
+  }
+}
