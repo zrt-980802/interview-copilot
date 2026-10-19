@@ -39,4 +39,4 @@ The first supported platform is Windows. The v2 design separates audio-source in
 
 ## License
 
-A license has not been selected yet. Until a license file is added, no permission is granted to copy, modify, or redistribute this code.
+Interview Copilot is licensed under the [Apache License, Version 2.0](LICENSE). Third-party components remain subject to their own licenses; see [Third-Party Notices](THIRD_PARTY_NOTICES.md).
