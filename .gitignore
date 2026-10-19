@@ -7,6 +7,9 @@ config.json
 data/
 resume.md
 
+# Generated SDD scratch and review artifacts (never commit)
+.superpowers/
+
 # Local environments and generated files
 venv/
 .venv/
