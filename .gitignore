@@ -15,6 +15,7 @@ __pycache__/
 *.log
 *.wav
 .pytest_cache/
+logs/
 
 # Personal diagnostics and legacy reports (not part of source release)
 agent_helper_test.py
