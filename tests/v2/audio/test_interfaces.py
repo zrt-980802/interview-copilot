@@ -1,4 +1,4 @@
-"""Contract tests for AudioSource and Transcriber protocols (Task 7).
+﻿"""Contract tests for AudioSource and Transcriber protocols (Task 7).
 
 Contract under test (spec 5.4/5.5, task-7-brief):
 
@@ -206,14 +206,17 @@ def test_transcribe_after_close_is_rejected() -> None:
 
 
 def test_interface_modules_do_not_import_framework_or_driver_types() -> None:
-    forbidden = re.compile(
+    # spec 5.1: httpx is forbidden in the domain/audio *interfaces*; the
+    # providers layer is the HTTP boundary and may use it (Task 10).
+    interface_forbidden = re.compile(
         r"^\s*(?:import|from)\s+(?:fastapi|httpx|pyaudio|pyaudiowpatch)\b",
         re.MULTILINE,
     )
-    targets = (
-        PROJECT_ROOT / "src" / "interview_copilot" / "audio" / "interfaces.py",
-        PROJECT_ROOT / "src" / "interview_copilot" / "providers" / "stt.py",
+    provider_forbidden = re.compile(
+        r"^\s*(?:import|from)\s+(?:fastapi|pyaudiowpatch)\b",
+        re.MULTILINE,
     )
-    for source in targets:
-        text = source.read_text(encoding="utf-8")
-        assert not forbidden.search(text), f"{source.name} imports a forbidden layer"
+    interfaces = PROJECT_ROOT / "src" / "interview_copilot" / "audio" / "interfaces.py"
+    assert not interface_forbidden.search(interfaces.read_text(encoding="utf-8"))
+    provider = PROJECT_ROOT / "src" / "interview_copilot" / "providers" / "stt.py"
+    assert not provider_forbidden.search(provider.read_text(encoding="utf-8"))
