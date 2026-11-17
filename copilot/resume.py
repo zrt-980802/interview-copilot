@@ -80,7 +80,7 @@ def _meta(origin_path: str, chars: int, note: str = "") -> dict:
     }
 
 
-def ingest(path: str, label: str = "") -> dict:
+def ingest(path: str, label: str = "", *, source_name: str | None = None) -> dict:
     """解析指定文件并入库。失败抛异常。"""
     raw = extract_text(path)
     text = clean_text(raw)
@@ -90,6 +90,8 @@ def ingest(path: str, label: str = "") -> dict:
     with open(RESUME_TXT, "w", encoding="utf-8") as f:
         f.write(text)
     meta = _meta(path, len(text), label)
+    if source_name:
+        meta["source"] = source_name
     with open(META_JSON, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
     return meta

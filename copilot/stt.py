@@ -23,6 +23,9 @@ class STTClient:
         self.timeout = float(config.get("timeout", 30.0))
         self.client = httpx.Client(timeout=self.timeout, transport=transport)
 
+    def close(self):
+        self.client.close()
+
     def transcribe(self, wav_bytes: bytes, prompt: str = "", language: str = "zh") -> str:
         headers = {}
         if self.api_key:

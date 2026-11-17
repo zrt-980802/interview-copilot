@@ -22,9 +22,8 @@ import queue
 import threading
 import time
 import wave
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 
-import httpx
 import numpy as np
 
 import pyaudiowpatch as pw
@@ -60,25 +59,25 @@ class SimulatedAudioInput:
         self._queue.put(None)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-with open(os.path.join(BASE_DIR, "config.json"), "r", encoding="utf-8") as f:
-    _CFG = json.load(f)
-
-_AUDIO = _CFG["audio"]
-TARGET_SR = int(_AUDIO["sample_rate"])   # whisper 输入 16k
 
 # ================= 音频管家：单线程 + 单实例 =================
 _PA = None                     # 全局唯一实例（仅在管家线程创建/使用）
 _PA_THREAD: threading.Thread | None = None
 _PA_READY = threading.Event()
 _CALL_Q: "queue.Queue" = queue.Queue()
+_PA_LOCK = threading.RLock()
+_PA_STOPPING = False
+_PA_ERROR = None
+_PA_SHUTDOWN = None
 
 
 def _pa_worker():
     """管家线程：初始化单例，然后循环执行投递的调用。"""
-    global _PA
+    global _PA, _PA_ERROR
     try:
         _PA = pw.PyAudio()     # 在管家线程内创建 → 线程亲和满足
-    except Exception:
+    except Exception as exc:
+        _PA_ERROR = exc
         _PA_READY.set()        # 失败也放行，调用侧会拿到异常
         return
     _PA_READY.set()
@@ -88,29 +87,41 @@ def _pa_worker():
         except Exception:
             break
         try:
-            box["result"] = fn(*args, **kwargs)
+            if fn is None:
+                _PA.terminate()
+            else:
+                box["result"] = fn(*args, **kwargs)
         except Exception as e:
             box["error"] = e
         finally:
             done_ev.set()
+        if fn is None and "error" not in box:
+            _PA = None
+            return
 
 
 def _ensure_pa_thread():
-    global _PA_THREAD
-    if _PA_THREAD and _PA_THREAD.is_alive():
-        return
-    _PA_READY.clear()
-    _PA_THREAD = threading.Thread(target=_pa_worker, daemon=True, name="pa-thread")
-    _PA_THREAD.start()
-    _PA_READY.wait(timeout=10)
+    global _PA_THREAD, _PA_ERROR
+    if _PA_STOPPING:
+        raise RuntimeError("PortAudio is stopping")
+    if not (_PA_THREAD and _PA_THREAD.is_alive()):
+        _PA_ERROR = None
+        _PA_READY.clear()
+        _PA_THREAD = threading.Thread(target=_pa_worker, daemon=True, name="pa-thread")
+        _PA_THREAD.start()
+    if not _PA_READY.wait(timeout=10):
+        raise TimeoutError("PortAudio startup timed out")
+    if _PA_ERROR is not None:
+        raise RuntimeError("PyAudio initialization failed") from _PA_ERROR
 
 
 def pa_call(fn, *args, timeout: float = 30.0, **kwargs):
     """在管家线程串行执行 fn，返回结果；异常原样抛出。"""
-    _ensure_pa_thread()
     done_ev = threading.Event()
     box = {}
-    _CALL_Q.put((fn, args, kwargs, done_ev, box))
+    with _PA_LOCK:
+        _ensure_pa_thread()
+        _CALL_Q.put((fn, args, kwargs, done_ev, box))
     if not done_ev.wait(timeout=timeout):
         raise TimeoutError(f"pa_call 超时: {getattr(fn, '__name__', fn)}")
     if "error" in box:
@@ -118,8 +129,40 @@ def pa_call(fn, *args, timeout: float = 30.0, **kwargs):
     return box.get("result")
 
 
+def shutdown_audio(timeout=10.0):
+    """Terminate PortAudio on its owning thread, after engines have closed."""
+    global _PA_THREAD, _PA_STOPPING, _PA_SHUTDOWN
+    with _PA_LOCK:
+        thread = _PA_THREAD
+        if thread is None or not thread.is_alive():
+            _PA_THREAD = None
+            _PA_STOPPING = False
+            _PA_SHUTDOWN = None
+            return
+        if not _PA_STOPPING:
+            _PA_STOPPING = True
+            _PA_SHUTDOWN = (threading.Event(), {})
+            done, box = _PA_SHUTDOWN
+            _CALL_Q.put((None, (), {}, done, box))
+        done, box = _PA_SHUTDOWN
+        deadline = time.monotonic() + timeout
+        if not done.wait(timeout):
+            raise TimeoutError("PortAudio shutdown timed out")
+        if "error" in box:
+            _PA_STOPPING = False
+            _PA_SHUTDOWN = None
+            raise RuntimeError("PortAudio termination failed") from box["error"]
+        thread.join(max(0, deadline - time.monotonic()))
+        if thread.is_alive():
+            raise TimeoutError("PortAudio shutdown timed out")
+        _PA_THREAD = None
+        _PA_STOPPING = False
+        _PA_SHUTDOWN = None
+
+
 def _pa():
-    _ensure_pa_thread()
+    with _PA_LOCK:
+        _ensure_pa_thread()
     if _PA is None:
         raise RuntimeError("PyAudio 初始化失败")
     return _PA
@@ -138,10 +181,7 @@ def pa_close(stream):
             stream.stop_stream()
         except Exception:
             pass
-        try:
-            stream.close()
-        except Exception:
-            pass
+        stream.close()
     pa_call(_close, timeout=10)
 
 
@@ -235,11 +275,11 @@ def _default_input():
 
 # ================= 工具 =================
 
-def _resample_to_16k(mono: np.ndarray, src_rate: int) -> np.ndarray:
-    if src_rate == TARGET_SR:
+def _resample_to_16k(mono: np.ndarray, src_rate: int, target_sr=16000) -> np.ndarray:
+    if src_rate == target_sr:
         return mono.astype(np.float32)
     n_src = mono.shape[0]
-    n_dst = int(round(n_src * TARGET_SR / src_rate))
+    n_dst = int(round(n_src * target_sr / src_rate))
     if n_dst <= 0:
         return np.zeros(0, dtype=np.float32)
     x_new = np.linspace(0.0, n_src - 1.0, num=n_dst)
@@ -262,10 +302,19 @@ class AudioEngine:
     def __init__(self, stt_base_url: str, stt_model: str, status_cb=None,
                  mode: str = "loopback", stt_api_key: str = "",
                  stt_api_key_env: list | None = None,
-                 audio_source=None, stt_client=None):
+                 audio_source=None, stt_client=None, audio_config=None):
         """mode: loopback=系统输出回环(面试官)；mic=麦克风输入(候选人本人)。"""
         assert mode in ("loopback", "mic")
         self.mode = mode
+        if audio_config is None:
+            with open(os.path.join(BASE_DIR, "config.json"), "r", encoding="utf-8") as f:
+                audio_config = json.load(f)["audio"]
+        self.audio_config = dict(audio_config)
+        self.sample_rate = int(self.audio_config.get("sample_rate", 16000))
+        self._closed = False
+        self._fully_closed = False
+        self._futures = set()
+        self._futures_lock = threading.Lock()
         self.audio_source = audio_source
         self.speaker_tag = "interviewer" if mode == "loopback" else "self"
         self.stt_base_url = stt_base_url.rstrip("/")
@@ -299,7 +348,7 @@ class AudioEngine:
             "buffered_ms": 0,
         }
 
-        self._http = httpx.Client(timeout=30.0)
+        self._owns_stt = stt_client is None
         self._stt = stt_client or STTClient({
             "base_url": self.stt_base_url,
             "model": self.stt_model,
@@ -333,6 +382,8 @@ class AudioEngine:
 
     def start(self, device_index: int | None = None):
         with self._running_lock:
+            if self._closed:
+                return {"ok": False, "error": "音频引擎已关闭"}
             if self._thread and self._thread.is_alive():
                 return {"ok": False, "error": "已在运行"}
             with self._generation_lock:
@@ -351,26 +402,86 @@ class AudioEngine:
             self._thread.start()
             return {"ok": True, "device": self.device_name}
 
-    def stop(self):
-        self._stop_flag.set()
-        with self._generation_lock:
-            self._generation += 1
-        t = self._thread
-        if t and t.is_alive():
-            t.join(timeout=6)
+    def stop(self, timeout=6.0):
         with self._running_lock:
+            self._stop_flag.set()
+            self.invalidate_pending()
+            t = self._thread
+            if t and t.is_alive():
+                t.join(timeout=timeout)
+            if t and t.is_alive():
+                return {"ok": False, "error": "音频采集线程未在期限内停止"}
             self._thread = None
+            if self._stream is not None:
+                try:
+                    pa_close(self._stream)
+                    self._stream = None
+                except Exception:
+                    return {"ok": False, "error": "音频设备流关闭失败"}
         self.stats["speaking"] = False
         self.stats["buffered_ms"] = 0
+        with self._futures_lock:
+            pending = list(self._futures)
+        for future in pending:
+            future.cancel()
+        return {"ok": True}
+
+    def close(self, timeout=10.0):
+        if self._fully_closed:
+            return
+        deadline = time.monotonic() + timeout
+        with self._running_lock:
+            self._closed = True
+        result = self.stop(timeout=max(0, deadline - time.monotonic()))
+        errors = []
+        if self._owns_stt:
+            try:
+                self._stt.close()
+            except Exception as exc:
+                errors.append(exc)
         self._transcribe_pool.shutdown(wait=False, cancel_futures=True)
         self._pool_shutdown = True
         if self.audio_source is not None:
-            self.audio_source.close()
-        return {"ok": True}
+            try:
+                self.audio_source.close()
+            except Exception as exc:
+                errors.append(exc)
+        with self._futures_lock:
+            pending = list(self._futures)
+        if pending:
+            _, unfinished = wait(pending, timeout=max(0, deadline - time.monotonic()))
+            if unfinished:
+                raise TimeoutError("STT workers did not stop before deadline")
+        if not result["ok"]:
+            raise TimeoutError(result["error"])
+        if errors:
+            raise RuntimeError("audio resource close failed") from errors[0]
+        self._transcribe_pool.shutdown(wait=True)
+        self._fully_closed = True
+
+    def _submit_segment(self, *args):
+        future = self._transcribe_pool.submit(self._transcribe_segment, *args)
+        with self._futures_lock:
+            self._futures.add(future)
+
+        def completed(done):
+            with self._futures_lock:
+                self._futures.discard(done)
+        future.add_done_callback(completed)
 
     def is_running(self) -> bool:
         t = self._thread
         return bool(t and t.is_alive() and not self._stop_flag.is_set())
+
+    @property
+    def generation(self) -> int:
+        with self._generation_lock:
+            return self._generation
+
+    def invalidate_pending(self):
+        """Discard pre-reset audio and STT results without stopping capture."""
+        with self._generation_lock:
+            self._generation += 1
 
     def recalibrate(self):
         """重置噪声底。"""
@@ -423,13 +534,13 @@ class AudioEngine:
             self._set_error("采集仅支持 Windows (WASAPI)")
             return
 
-        frame_ms = int(_AUDIO["frame_ms"])
-        frame_samples = TARGET_SR * frame_ms // 1000
-        silence_end_ms = int(_AUDIO["silence_end_ms"])
-        min_segment_ms = int(_AUDIO["min_segment_ms"])
-        max_segment_ms = int(_AUDIO["max_segment_ms"])
-        offset = float(_AUDIO["speech_threshold_offset_db"])
-        abs_floor = float(_AUDIO["absolute_speech_db"])
+        frame_ms = int(self.audio_config["frame_ms"])
+        frame_samples = self.sample_rate * frame_ms // 1000
+        silence_end_ms = int(self.audio_config["silence_end_ms"])
+        min_segment_ms = int(self.audio_config["min_segment_ms"])
+        max_segment_ms = int(self.audio_config["max_segment_ms"])
+        offset = float(self.audio_config["speech_threshold_offset_db"])
+        abs_floor = float(self.audio_config["absolute_speech_db"])
         # P0-1 修复：麦克风通道人声峰值常低至 -40dB，硬下限 -44+4=-40 会把
         # 人声全部拦掉（22 会话 0 转写的根因）。mic 通道下限放低到 -60dB，
         # 且进入阈值偏移减半（mic 距离近、本底低，无需 +11dB 那么保守）。
@@ -443,6 +554,7 @@ class AudioEngine:
         chans_for_mix = 2
         try:
             stream, src_rate, chans_for_mix = self._open_stream(raw_q)
+            self._stream = stream
         except Exception as e:
             src_label = "麦克风" if self.mode == "mic" else "回环"
             self._set_error(f"无法打开{src_label}采集: {e}")
@@ -462,17 +574,18 @@ class AudioEngine:
         calib_start = time.time()
         calib_deadline = calib_start + 2.0
         last_voice_wall = [None]
+        capture_generation = self.generation
 
         def flush(force=False):
             nonlocal ring, ring_ms, speech_frames, silence_frames
             seg_bytes = b"".join(ring)
             dur = ring_ms
             ring, ring_ms, speech_frames, silence_frames = [], 0, 0, 0
-            if seg_bytes and (force or dur >= min_segment_ms):
+            if not self._stop_flag.is_set() and seg_bytes and (force or dur >= min_segment_ms):
                 with self._segment_lock:
                     self._segment_seq += 1
                     segment_seq = self._segment_seq
-                self._transcribe_pool.submit(self._transcribe_segment, seg_bytes, segment_seq)
+                self._submit_segment(seg_bytes, segment_seq, capture_generation)
 
         def vad_step(chunk16k: np.ndarray):
             nonlocal ring, ring_ms, speech_frames, silence_frames
@@ -535,6 +648,17 @@ class AudioEngine:
 
         try:
             while not self._stop_flag.is_set():
+                if capture_generation != self.generation:
+                    capture_generation = self.generation
+                    pending = np.zeros(0, dtype=np.float32)
+                    ring, ring_ms, speech_frames, silence_frames = [], 0, 0, 0
+                    last_voice_wall[0] = None
+                    calib_frames.clear()
+                    while True:
+                        try:
+                            raw_q.get_nowait()
+                        except queue.Empty:
+                            break
                 try:
                     raw = (self.audio_source.get_chunk(timeout=0.15)
                            if self.audio_source is not None else raw_q.get(timeout=0.15))
@@ -548,7 +672,7 @@ class AudioEngine:
                     else:
                         mono = samples.astype(np.float32)
                     mono = np.asarray(mono, dtype=np.float32) / 32768.0
-                    pcm = _resample_to_16k(mono, src_rate)
+                    pcm = _resample_to_16k(mono, src_rate, self.sample_rate)
                     if pcm.size:
                         pending = np.concatenate([pending, pcm])
                     while pending.size >= frame_samples:
@@ -567,18 +691,20 @@ class AudioEngine:
             if stream is not None:
                 try:
                     pa_close(stream)
+                    self._stream = None
                 except Exception:
-                    pass
+                    self.last_error = "音频设备流关闭失败"
             self.status_cb(type="status", message="采集已停止")
 
-    def _transcribe_segment(self, pcm_f32_bytes: bytes, segment_seq: int = 0):
+    def _transcribe_segment(self, pcm_f32_bytes: bytes, segment_seq: int = 0,
+                            segment_generation: int | None = None):
         samples = np.frombuffer(pcm_f32_bytes, dtype=np.float32)
         pcm16 = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)
-            wf.setframerate(TARGET_SR)
+            wf.setframerate(self.sample_rate)
             wf.writeframes(pcm16.tobytes())
         wav_bytes = buf.getvalue()
         # 动态热词：基于简历/JD/论文标题（bench 实测专名从 MirrorA→MirrorRE）
@@ -589,7 +715,7 @@ class AudioEngine:
                                     paper_titles=pt_,
                                     base="后端面试可能出现的术语：MySQL 索引 "
                                          "事务 Redis 缓存 Kafka 高并发 分布式")
-        segment_generation = self._generation
+        segment_generation = self.generation if segment_generation is None else segment_generation
         for attempt in range(3):
             if self._stop_flag.is_set() or segment_generation != self._generation:
                 return
@@ -602,11 +728,13 @@ class AudioEngine:
                     self.status_cb(type="question", text=text,
                                    at=time.strftime("%H:%M:%S"),
                                    segment_seq=segment_seq,
+                                   input_generation=segment_generation,
                                    speaker=self.speaker_tag)
                 return
             except Exception as e:
                 self.last_error = f"STT 请求失败: {e}"
-            time.sleep(1.0)
+            if self._stop_flag.wait(1.0):
+                return
         self.stats["errors"] += 1
         self.status_cb(type="status", level="error",
                        message=f"{self.last_error}（将跳过该段）")

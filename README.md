@@ -12,6 +12,7 @@ A Windows-first local interview copilot prototype. It captures system loopback a
 - Configurable OpenAI-compatible LLM provider
 - Local SQLite interview history
 - Browser-based teleprompter UI
+- Paired, read-only phone display on a separate optional LAN port
 - Resume, paper, and supporting-material context
 
 ## Privacy
@@ -25,6 +26,29 @@ Local runtime data is intentionally excluded from version control:
 - local virtual environments and caches
 
 Copy `config.example.json` to `config.json` and fill in your own local settings. Never commit the resulting file.
+
+## Run locally
+
+Install the project dependencies into the existing environment, including the audio and PDF extras:
+
+```powershell
+.\venv\Scripts\python.exe -m pip install -e '.[audio,pdf]'
+.\venv\Scripts\python.exe server.py
+```
+
+The desktop workspace defaults to `http://127.0.0.1:8527`. Opening the page does not start recording; use the listen control. `启动面试辅助.bat` checks service readiness and opens the workspace.
+
+For PC capture with phone display, run `后台手机模式.bat`, or `python server.py --mobile --auto-listen`. This starts PC loopback and microphone capture without opening a desktop browser. The launcher prints LAN addresses and a single-use pairing code. The desktop phone control also provides a QR code and revocation. Phone and desktop share the same runtime and active session.
+
+See [phone setup and boundaries](docs/mobile-display.md). The current version remains a development prototype; real phone, LAN and audio acceptance is pending.
+
+The desktop history control opens `/history` for searchable review, saved source excerpts, previous deep dives, copying and Markdown downloads. Completed answers keep their original text and generation sources across service restarts. Older records remain readable; see [history storage and upgrade notes](docs/history-review.md).
+
+The library control opens `/files`: keep a current resume alongside multiple reference documents, initialize uploaded files, import specific public GitHub Markdown links, preview text and choose which documents participate in retrieval. See [document library](docs/document-library.md) for supported formats and the boundary between candidate background and reference material.
+
+The settings control opens `/settings` for provider URL, API key, quick/detail models and an optional fallback. It supports model discovery, connection tests, Windows user-scoped encrypted key storage and session-only keys. Saved settings apply to subsequent answers without interrupting an answer already running. Settings are available only on the local desktop listener; see [configuration](docs/configuration.md).
+
+The microphone selector includes the system default, available input devices and off. The listen command starts both selected channels; devices can be switched during capture. Candidate speech is kept separate from AI suggestions and passed to follow-up questions and the current question's deep dives.
 
 ## Development status
 

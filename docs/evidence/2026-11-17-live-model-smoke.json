@@ -1,0 +1,240 @@
+{
+  "schema_version": 1,
+  "base_url": "https://new-api.carobo.cn/v1",
+  "material": "Synthetic practice order API: Python/PostgreSQL, interface developer, no leadership, no production benchmark, no measured metrics, no papers.",
+  "runs": [
+    {
+      "stage": "baseline",
+      "result": {
+        "created_at": "2026-11-17T04:19:47.013106+00:00",
+        "case_id": "principle",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 1200,
+        "deadline_s": 45,
+        "first_content_ms": 10813,
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "【开口】我用 cache-aside：先更新库再删缓存，接受最终一致，靠 TTL 与重试兜底。\n【要点】顺序取舍 ::: 先写库后删缓存，避免\"删了缓存但写库失败\"留下长期脏缓存；更新缓存并发写易乱序，删除语义更稳 ｜ 例：练习订单接口 updateOrder 里先 UPDATE 再 DEL 缓存 key，失败进重试队列。\n【要点】并发风险 ::: 读未命中回填与写删交错会写回旧值，窗口在\"查库—回填\"间隙；延迟双删或 binlog 订阅补偿可缩窗 ｜ 例：订单详情 miss 后回填可能覆盖刚删的 key，加一次延迟二次删兜住。\n【要点】一致性边界 ::: 缓存只承诺最终一致，TTL 是脏数据最长存活上限；要强一致就读库或加锁，别指望缓存 ｜ 例：订单金额校验直读 PostgreSQL，列表与详情走缓存，TTL 设 30s。\n【要点】工程兜底 ::: 删除失败需重试且幂等，或订阅变更日志异步删；热点 key 用逻辑过期防击穿 ｜ 例：删除失败落本地队列重试；(例：业界用 Canal 订阅 binlog 驱动删除)。\n【方向】故障处理 ::: 缓存不可用时如何降级直查库、限流与超时怎么设，避免雪崩。\n【方向】版本号方案 ::: 用单调版本号或 CAS 拒绝旧值回填，代价与实现成本怎么权衡。",
+        "status": "complete",
+        "error": "",
+        "duration_ms": 12813,
+        "chars": 552
+      }
+    },
+    {
+      "stage": "baseline",
+      "result": {
+        "created_at": "2026-11-17T04:19:47.013106+00:00",
+        "case_id": "principle",
+        "model": "qwen3.8-max",
+        "temperature": 0.4,
+        "max_tokens": 1200,
+        "deadline_s": 45,
+        "first_content_ms": null,
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "qwen3.8-max"
+          }
+        ],
+        "content": "",
+        "status": "deadline",
+        "error": "",
+        "duration_ms": 45016,
+        "chars": 0
+      }
+    },
+    {
+      "stage": "protocol-diagnostic",
+      "result": {
+        "case_id": "protocol-diagnostic",
+        "model": "qwen3.8-max",
+        "status": "complete",
+        "http_status": 200,
+        "headers_ms": 1078,
+        "first_frame_ms": 1078,
+        "first_content_ms": 1813,
+        "frames": 16,
+        "reasoning_chars": 117,
+        "content_chars": 2,
+        "finish_reason": "stop",
+        "usage": {
+          "completion_tokens": 39,
+          "prompt_tokens": 68,
+          "total_tokens": 107
+        },
+        "duration_ms": 1813
+      }
+    },
+    {
+      "stage": "baseline",
+      "result": {
+        "created_at": "2026-11-17T04:27:22.402232+00:00",
+        "case_id": "missing-evidence",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 1200,
+        "deadline_s": 45,
+        "first_content_ms": 3875,
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "【开口】我先说我的理解——这是练习项目、没做过生产压测，我只讲能验证的改动，不报未测的数字。\n【要点】先划边界 ::: 没有压测基线就不承诺提升百分比，只讲可复现的机制改动与 EXPLAIN 前后计划差异 ｜ 例：订单查询接口用 order_id 主键等值查，计划从 Seq Scan 变为 Index Scan\n【要点】索引设计 ::: 复合索引按等值列在前、范围列在后的顺序建，覆盖过滤与排序以减少回表 ｜ 例：status + created_at 复合索引支撑列表按时间分页\n【要点】分页正确性 ::: 深翻页用 keyset 游标替代 OFFSET，OFFSET 越大扫描行数线性增长，且并发插入会导致结果漂移 ｜ 例：以 (created_at, id) 做游标分页，保证翻页不重不漏\n【要点】故障兜底 ::: 连接池限并发加 statement_timeout，防单条慢查询占满连接拖垮整个接口 ｜ 例：(例：PgBouncer 池上限配语句超时，业界常见组合)\n【方向】量化补齐 ::: 说明会用 pg_stat_statements 加压测工具补基线与前后对比\n【方向】设计权衡 ::: 展开缓存或读写分离带来的不一致代价与正确性取舍",
+        "status": "complete",
+        "error": "",
+        "duration_ms": 6062,
+        "chars": 526
+      }
+    },
+    {
+      "stage": "first-revision",
+      "result": {
+        "created_at": "2026-11-17T04:37:12.918102+00:00",
+        "case_id": "missing-evidence",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 1200,
+        "deadline_s": 45,
+        "first_content_ms": 3032,
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "【开口】前提不成立：我不是订单系统负责人，也没有做过生产性能优化或量化压测。实际经历只是练习用订单查询接口的接口开发，使用 Python 和 PostgreSQL，没有可引用的提升数字。\n【要点】实际范围 ::: 我能说明的是查询接口开发中的正确性和基本设计权衡，不能把通用优化方案说成已落地成果；QPS、P95、提升比例均未测。\n【要点】优化边界 ::: 性能结论依赖基线、数据规模、并发模型和指标口径；缺少这些条件时，“提升多少”没有可信答案，也不应事后估算。\n【要点】待验证方法 ::: 如果要验证，一种方案是先固定查询模式与数据量，记录 P95、错误率和执行计划，再分别调整索引、SQL 或连接池，做单变量对照并保留回滚条件。\n【方向】索引与执行计划 ::: 如何用 EXPLAIN ANALYZE 判断订单查询的瓶颈在扫描、回表还是排序？\n【方向】正确性优先 ::: 分页、超时重试和并发查询下，如何避免重复读取或状态不一致？",
+        "status": "complete",
+        "error": "",
+        "duration_ms": 4438,
+        "chars": 418
+      }
+    },
+    {
+      "stage": "first-revision",
+      "result": {
+        "created_at": "2026-11-17T04:38:48.014734+00:00",
+        "case_id": "principle",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 1200,
+        "deadline_s": 45,
+        "first_content_ms": 5031,
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "【开口】常见做法是 cache-aside：先更新数据库、再删除缓存，删除优先于更新缓存；这只能做到最终一致，需靠 TTL 和补偿来收敛，不能当作强一致来保证。\n\n【要点】顺序取舍 ::: 先更新 DB 再删缓存，脏读窗口只在“删缓存前”的极小间隙；若先删缓存再更新 DB，并发读会把旧值回填，窗口更大。更新缓存而非删除，在并发写时可能乱序覆盖成旧值，而且对只读多写的字段是浪费。\n\n【要点】并发风险·读回填 ::: 典型时序是读未命中→查 DB 旧值→写 DB 新值→删缓存→旧值写回。缓解手段有延迟双删、缓存写入加短互斥或版本号校验；延迟双删只能降低概率，不能消除。\n\n【要点】并发风险·删除失败 ::: DB 提交成功但删缓存失败会留下脏数据直到 TTL 过期。可用重试、消息补偿或 binlog 订阅异步删除，目标是最终收敛，不是绝对正确。\n\n【要点】一致性边界 ::: 不加分布式事务或锁时，缓存与 DB 无法强一致，只能接受短暂脏读；强一致要牺牲可用性，且读写分离下从库延迟仍会引入旧值回填。\n\n【方向】练习项目落地 ::: 在订单查询接口上采用 cache-aside + TTL，并设计两线程并发回填、删除失败重试的验证用例，结果需实测后再给指标。\n\n【方向】主从延迟 ::: 若 DB 有从库，读回填可能读到延迟数据，需要评估强制走主库或延迟双删的代价。",
+        "status": "complete",
+        "error": "",
+        "duration_ms": 7172,
+        "chars": 586
+      }
+    },
+    {
+      "stage": "current-revision",
+      "result": {
+        "created_at": "2026-11-17T04:39:55.055607+00:00",
+        "case_id": "principle",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 1200,
+        "prompt_sha256": "57db760f976e069f1c61c4b39ee5bae39a863a5e15a107fd4da057df3b21a201",
+        "deadline_s": 45,
+        "first_content_ms": 2391,
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "【开口】常用做法是 Cache-Aside：读时未命中先查库再回填；写时先更新数据库，再删除缓存，而不是更新缓存。这样只能做到最终一致；TTL 和删除重试用于最终收尾，不保证强一致。\n【要点】先更新数据库再删除缓存 ::: 删除缓存比更新缓存更稳妥：如果并发写导致旧值覆盖，或者写入的缓存值没被后续读到，这两种情况下留下的都是脏缓存；删除则只是让下一次读回到数据库取数。如果数据库更新成功、缓存删除失败，可以重试，或用 binlog 订阅异步补偿，并加 TTL 作为兜底。\n【要点】删除后旧值回填竞态 ::: 读线程在数据库更新前读到旧值，写线程更新数据库并删除缓存后，读线程才把旧值写回缓存，脏数据会存活到 TTL 到期。缓解方式是延迟双删、给缓存写入加短 TTL、用版本号或 CAS 拒绝旧版本回填；但都只是缩小窗口。\n【要点】先删缓存后更新数据库更危险 ::: 删除后、数据库提交前若有读请求回源，会读到旧值并回填，脏数据可能长期存在；在主从延迟下，回源读从库还会放大该窗口。所以一般不采用这个顺序，除非配合锁或串行化。\n【要点】一致性边界 ::: 在跨存储、无分布式事务的前提下，缓存与数据库只能保证最终一致，异常期间的读可能返回旧值；要求强一致的读应直连数据库，或按业务接受读己之写、加锁、版本校验等条件来换取性能。\n【方向】缓存删除失败的补偿链路 ::: 重试队列或 binlog 订阅如何保证至少一次删除，以及幂等和顺序问题。\n【方向】热点 key 与并发写 ::: 单 key 高并发下延迟双删的实际效果，以及版本号回填怎么实现。",
+        "status": "complete",
+        "error": "",
+        "duration_ms": 5641,
+        "chars": 673
+      }
+    },
+    {
+      "stage": "current-revision",
+      "result": {
+        "created_at": "2026-11-17T04:40:26.877221+00:00",
+        "case_id": "missing-evidence",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 1200,
+        "prompt_sha256": "57db760f976e069f1c61c4b39ee5bae39a863a5e15a107fd4da057df3b21a201",
+        "deadline_s": 45,
+        "first_content_ms": 1828,
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "【开口】这个练习用订单查询接口里我承担的是接口开发，不是主导；目前也没有生产环境性能压测和量化提升数据，因此不能给出“提升了多少”的结论。\n【要点】实际范围 ::: 项目是 Python + PostgreSQL 的练习订单查询接口，我负责接口层开发；没有负责人职责、线上流量或性能指标，不能把通用优化经验写成已完成的成果。\n【要点】可验证的优化方向 ::: 如果继续做，可先用 EXPLAIN ANALYZE 检查查询计划和索引命中，再针对分页、避免 N+1 查询、连接池配置逐项改动；每项都需固定数据集和负载下对比，避免把相关性当成因果。\n【要点】指标设计 ::: 应同时记录 P50/P95 延迟、吞吐、错误率和数据库资源使用，并区分冷/热缓存与数据量条件；没有这些测量，就不能声称性能提升或给出百分比。\n【方向】正确性边界 ::: 优化分页和索引时，如何验证结果集一致性、并发写入下的可见性以及深分页的稳定性？\n【方向】故障处理 ::: 数据库连接耗尽或慢查询堆积时，接口层应如何限流、超时和降级，并用什么实验验证？",
+        "status": "complete",
+        "error": "",
+        "duration_ms": 3390,
+        "chars": 462
+      }
+    },
+    {
+      "stage": "current-revision",
+      "result": {
+        "created_at": "2026-11-17T04:40:30.776929+00:00",
+        "case_id": "detail",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 1200,
+        "prompt_sha256": "c57c1ed824e6a21970bf32b0a29d6fbcf9d53cc9b9c7c07b0815a2358b6226d2",
+        "deadline_s": 45,
+        "first_content_ms": 4890,
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "**深挖**｜资料中未记录你实际使用的缓存方案，以下按通用机制说明，不当作你的项目经历。\n\n- **两种写顺序的脏数据窗口不同，但都不是零。** 先删缓存再更新数据库：删除之后、事务提交之前，并发读会回填旧值，脏数据一直保留到 TTL。先更新数据库再删缓存：读请求在更新前未命中缓存，读到旧值，更新提交后缓存被删，读请求又把旧值回填，脏数据同样保留到 TTL。后者的窗口是“读库到回填缓存”这一段，概率较低，但不会消失。\n- **删除失败会让一致性边界从“毫秒级”退化为“TTL 级”。** 如果删除缓存只是同步调用加打日志，网络抖动或 Redis 超时就会留下长期脏数据。可行做法是删除失败后进重试队列，或订阅 binlog 做补偿删除；代价是引入额外组件，并要考虑补偿的幂等和乱序。\n- **延迟双删只能降低概率，不能保证。** 第二次删除需要覆盖“并发读回填”的时间窗，而这个时间窗取决于读请求耗时和主从延迟，无法精确取值。用 sleep 会阻塞写路径，用异步延迟又要接受“延迟不够就仍然脏”。更确定的做法是给缓存值带版本号或逻辑时间戳，回填时做 CAS，拒绝旧版本覆盖；代价是缓存结构变复杂，写路径要维护版本。\n- **一致性边界要明说。** Cache Aside 属于最终一致，上界是 TTL 加补偿延迟；要接近强一致，只能读写走同一存储、加分布式锁双检，或读时用单飞锁抑制并发回填。这些都要用吞吐和可用性来换，不能无条件宣称“保证一致”。\n\n**追问预备**\n\n1. **“延迟双删的延迟设多久？”** 应对：取决于主从复制延迟和读请求耗时，没有可推导的确定值；所以优先用 binlog 订阅触发的删除或版本号校验替代固定 sleep，并监控“缓存值与库值不一致”的抽样比对。\n2. **“删除失败怎么办，能保证最终一致吗？”** 应对：重试队列和 binlog 补偿保证“最终会删”，但重试本身可能失败或乱序，真正的兜底是 TTL；只能保证收敛时间有上界，不能保证任意时刻一致。",
+        "status": "complete",
+        "error": "",
+        "duration_ms": 8265,
+        "chars": 847
+      }
+    },
+    {
+      "stage": "current-revision",
+      "result": {
+        "created_at": "2026-11-17T04:41:03.006467+00:00",
+        "case_id": "principle",
+        "model": "qwen3.8-max",
+        "temperature": 0.4,
+        "max_tokens": 1200,
+        "prompt_sha256": "57db760f976e069f1c61c4b39ee5bae39a863a5e15a107fd4da057df3b21a201",
+        "deadline_s": 45,
+        "first_content_ms": 21094,
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "qwen3.8-max"
+          }
+        ],
+        "content": "【开口】常用 Cache-Aside：读未命中查 DB 回填缓存；写时先更新数据库，再删除缓存，而不是更新缓存。这通常只能做到最终一致，强一致需要锁、事务或缓存与 DB 原子可见。\n【要点】顺序选择 ::: 先更新 DB 再删缓存，可避免“先删缓存后更新 DB”时并发读把旧 DB 值回填缓存。删除比更新更安全，因为并发更新缓存容易按错误顺序覆盖；示例：A 写 1、B 写 2，若 B 先写缓存、A 后写缓存，缓存会停在 1。\n【要点】并发风险 ::: 先更新 DB 再删缓存仍有竞态：读请求未命中读到旧 DB 值，写请求提交并删缓存，读请求随后把旧值写入缓存。可用延迟双删、binlog 订阅异步删缓存、版本号或分布式锁缓解，但通常只能缩小窗口或加快恢复。\n【要点】一致性边界与失败处理 ::: 缓存和数据库是独立系统，没有原子提交就无法保证任意时刻一致；需要 TTL 兜底、删除失败重试或消息重投。若业务必须强一致，应绕过缓存读、加读写锁，或让缓存参与同一事务/一致存储。\n【方向】延迟双删 ::: 延迟时间如何选，和主从延迟、读回填窗口有什么关系。\n【方向】binlog 删缓存 ::: 用 Canal/Debezium 异步删缓存时，消息丢失、重复和乱序怎么处理。",
+        "status": "complete",
+        "error": "",
+        "duration_ms": 26485,
+        "chars": 536
+      }
+    }
+  ]
+}

@@ -14,6 +14,7 @@ import os
 import re
 import threading
 import time
+from uuid import uuid4
 
 import httpx
 
@@ -29,6 +30,7 @@ CHUNK_CHARS = 850           # 检索用的块大小
 RETRIEVE_BUDGET = 1500      # 注入节选总预算(字符)
 
 _lock = threading.Lock()
+_origin_lock = threading.Lock()
 PAPERS: list = []           # [{key,title,digest,full,mtime}]
 
 
@@ -98,7 +100,8 @@ def _short_title(full_text: str) -> str:
     return "Untitled"
 
 
-def _ingest_one(path: str, cfg: dict, note: str = "", allow_cache: bool = True) -> dict | None:
+def _ingest_one(path: str, cfg: dict, note: str = "", allow_cache: bool = True,
+                source_name: str | None = None) -> dict | None:
     raw = extract_text(path)
     text = clean_text(raw)[:MAX_FULL_CHARS]
     if len(text) < 300:
@@ -113,6 +116,7 @@ def _ingest_one(path: str, cfg: dict, note: str = "", allow_cache: bool = True) 
     # P3-1：解析缓存——同源文件 mtime 未变时复用上次的 digest/title，
     # 不重复调 LLM 生成摘要卡（重启后缓存生效，零额度消耗）
     cache_path = os.path.join(PAPERS_DIR, stem + ".json")
+    cache = {}
     if allow_cache:
         try:
             with open(cache_path, "r", encoding="utf-8") as f:
@@ -122,7 +126,7 @@ def _ingest_one(path: str, cfg: dict, note: str = "", allow_cache: bool = True) 
                     f.write(text)
                 return {
                     "key": stem,
-                    "source": cache.get("source") or os.path.basename(path),
+                    "source": source_name or cache.get("source") or os.path.basename(path),
                     "origin": cache.get("origin") or path,
                     "title": cache.get("title") or _short_title(text),
                     "digest": cache["digest"],
@@ -131,11 +135,12 @@ def _ingest_one(path: str, cfg: dict, note: str = "", allow_cache: bool = True) 
                     "note": note,
                 }
         except Exception:
-            pass  # 缓存缺失/损坏 → 走完整解析
-    digest = _llm_digest(httpx.Client(), _llm_conf(cfg), text)
+            cache = {}  # 缓存缺失/损坏 → 走完整解析
+    with httpx.Client() as client:
+        digest = _llm_digest(client, _llm_conf(cfg), text)
     item = {
         "key": stem,
-        "source": os.path.basename(path),
+        "source": source_name or cache.get("source") or os.path.basename(path),
         "origin": path,
         "title": _short_title(text),
         "digest": digest,
@@ -177,17 +182,18 @@ def _candidate_files(cfg: dict) -> list:
 
 def remember_origin(path: str):
     """把新来源写进 known_origins，重启后仍能增量加载。"""
-    try:
-        with open(META_JSON, "r", encoding="utf-8") as f:
-            meta = json.load(f)
-    except Exception:
-        meta = {}
-    known = meta.get("known_origins", [])
-    if path not in known:
-        known.append(path)
-        meta["known_origins"] = known
-        with open(META_JSON, "w", encoding="utf-8") as f:
-            json.dump(meta, f, ensure_ascii=False, indent=2)
+    with _origin_lock:
+        try:
+            with open(META_JSON, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except (OSError, ValueError):
+            meta = {}
+        known = meta.get("known_origins", [])
+        if path not in known:
+            known.append(path)
+            meta["known_origins"] = known
+            with open(META_JSON, "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
 # ---------------- 检索 ----------------
@@ -260,6 +266,13 @@ def digests_block() -> str:
     return "\n".join(lines)
 
 
+def corpus_documents() -> list[dict]:
+    with _lock:
+        return [{"id": item["key"], "source": "papers:" + item["key"] + "/" + item["source"],
+                 "title": item["title"], "text": item["full"], "kind": "paper"}
+                for item in PAPERS]
+
+
 # ---------------- 加载调度 ----------------
 
 def load_status() -> dict:
@@ -302,7 +315,7 @@ def _reload_sync(cfg: dict, broadcast=None, include_existing=True):
     return loaded
 
 
-def start_background_load(cfg_llm: dict, broadcast=None):
+def start_background_load(cfg_llm: dict, broadcast=None, workers=None):
     """启动时后台加载论文库（首次每篇要一次LLM摘要调用）。cfg_llm 传根配置。"""
     def work():
         try:
@@ -323,16 +336,20 @@ def start_background_load(cfg_llm: dict, broadcast=None):
             if broadcast:
                 broadcast({"type": "status", "level": "error",
                            "message": f"论文库加载失败: {e}"})
-    threading.Thread(target=work, daemon=True).start()
+    if workers is not None:
+        workers.start(work, name="paper-loader")
+    else:
+        threading.Thread(target=work, daemon=True).start()
 
 
 def add_paper_file(path: str, cfg_llm: dict, broadcast=None) -> dict | None:
     """UI 上传的单篇论文：复制进 data/papers 并立即入库。"""
     import shutil
-    archive = os.path.join(PAPERS_DIR, os.path.basename(path))
+    source_name = os.path.basename(path)
+    archive = os.path.join(PAPERS_DIR, uuid4().hex + "_" + source_name)
     os.makedirs(PAPERS_DIR, exist_ok=True)
     shutil.copyfile(path, archive)
-    item = _ingest_one(archive, cfg_llm, note="upload")
+    item = _ingest_one(archive, cfg_llm, note="upload", source_name=source_name)
     if not item:
         return None
     with _lock:

@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <title>面试辅助 · 手机显示</title>
+  <link rel="stylesheet" href="/assets/mobile.css">
+  <link rel="stylesheet" href="/assets/answer-content.css">
+  <script src="/assets/lucide.js" defer></script>
+  <script src="/assets/mobile.js" type="module"></script>
+</head>
+<body>
+  <header>
+    <div class="brand"><i data-lucide="audio-lines"></i><span>面试辅助</span></div>
+    <span id="connection" role="status">连接中</span>
+    <button id="theme" class="icon" title="切换明暗" aria-label="切换明暗"><i data-lucide="sun-moon"></i></button>
+  </header>
+  <main id="pairing" hidden>
+    <form id="pairForm">
+      <i data-lucide="smartphone" class="pair-symbol"></i>
+      <h1>连接当前会话</h1>
+      <label for="code">电脑端配对码</label>
+      <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{8}" minlength="8" maxlength="8" required>
+      <button id="pairButton" type="submit" class="primary"><i data-lucide="link"></i>配对</button>
+      <p id="pairError" role="alert"></p>
+    </form>
+  </main>
+  <div id="viewer" hidden>
+    <div class="reading-tools">
+      <label class="turn-picker"><span>题目</span><select id="turns" aria-label="选择题目"><option>暂无题目</option></select></label>
+      <button id="latest" class="icon" aria-label="跟随最新题" title="跟随最新题" aria-pressed="true"><i data-lucide="list-end"></i></button>
+      <button id="focus" class="icon" aria-label="专注显示" title="专注显示" aria-pressed="false"><i data-lucide="maximize"></i></button>
+    </div>
+    <div id="reader" tabindex="0">
+      <div id="empty">等待新问题</div>
+      <article id="current" hidden><div class="eyebrow" id="number"></div><h1 id="question"></h1><div id="answers"></div></article>
+    </div>
+    <footer>
+      <div id="capture" role="status">采集未开启</div>
+      <div class="settings">
+        <label class="size-control"><i data-lucide="type"></i><input id="fontSize" type="range" min="16" max="26" value="19" step="1" aria-label="文字大小"></label>
+        <button id="awake" class="icon" title="屏幕常亮" aria-label="屏幕常亮" aria-pressed="false"><i data-lucide="lamp-desk"></i></button>
+        <button id="logout" class="icon" title="断开配对" aria-label="断开配对"><i data-lucide="log-out"></i></button>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,463 @@
+{
+  "schema_version": 1,
+  "material_policy": "synthetic_only",
+  "suite_version": 1,
+  "suite_sha256": "f54b3d4f193660b1f48c47db1b846c3e5c47d13d9eaa20f88226e76d3f6e8dd3",
+  "results": [
+    {
+      "case_id": "T03",
+      "category": "principle",
+      "result": {
+        "created_at": "2026-11-17T06:27:59.970925+00:00",
+        "case_id": "T03",
+        "model": "qwen3.8-max",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "1e7ca1d7f2fe4d88b4392827d5ae8aeb3910a01ce07ede27b82c2c261e1e7608",
+        "case_sha256": "e48085cf37902d8e83194f09d7d1d57baba5dfb7b2bc945cb53f204c8d6c597c",
+        "deadline_s": 45,
+        "first_content_ms": 813,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "qwen3.8-max"
+          }
+        ],
+        "content": "**深挖**｜不能。Single-flight 只合并同 key 的并发读加载以降低击穿，若不协调数据库写入和回填，它无法保证读写强一致〔synthetic:cache-correctness.md·L5-6〕。\n\n因果链：Single-flight 的作用域是“同一时刻对同一 key 的多个读请求”。当缓存未命中时，它让其中一个请求去源库查询并回填，其余等待者复用该结果，从而避免并发回源压垮数据库。但它既不拦截写操作，也不感知外部写入时序。\n\n失败反例：\n1. 请求 A 触发 single-flight 查库，正在回填缓存；\n2. 此时另一客户端执行写操作 W，更新数据库并使旧缓存失效（或尚未失效）；\n3. A 回填完成，缓存里是 W 之前的旧值；\n4. 后续读请求命中该旧缓存，读到过期数据。\n\n成立条件与代价：Single-flight 解决的是并发读放大问题，而非一致性协议。若业务要求强一致读，必须绕过缓存，直接访问具备所需隔离语义的权威存储（如使用可串行化事务的数据库），代价是放弃缓存带来的读吞吐优势。\n\n**追问预备**｜如果面试官问“那怎么在保留缓存的同时尽量提高一致性？”，可答：采用 Cache-Aside 并在写操作后主动删除（而非更新）缓存，配合 short TTL 兜底；但这仍是最终一致，不是强一致。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [
+          {
+            "id": "cc9aa83c72502bc9",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              5,
+              6
+            ]
+          }
+        ],
+        "context": {
+          "original_chars": 2457,
+          "sent_chars": 2457,
+          "max_chars": 24000,
+          "partial_fields": [],
+          "messages_sha256": "01546077e3d921a16b94e6247eb46c4d208c599c13e26f1aaf707dd1fcf76c7f"
+        },
+        "duration_ms": 8985,
+        "chars": 569,
+        "execution_path": "provider",
+        "provider_attempts": 1
+      },
+      "automated_findings": [],
+      "human_review_required": true,
+      "review_rubric": [
+        "合并读请求和协调写入是不同作用域",
+        "提供读写回填竞态反例"
+      ]
+    },
+    {
+      "case_id": "T04",
+      "category": "principle",
+      "result": {
+        "created_at": "2026-11-17T06:28:08.943129+00:00",
+        "case_id": "T04",
+        "model": "qwen3.8-max",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "1e7ca1d7f2fe4d88b4392827d5ae8aeb3910a01ce07ede27b82c2c261e1e7608",
+        "case_sha256": "c5b5919b25f31f4ca76319ff934edcb5baf2fc1cc2b827cfbbf119be540b4725",
+        "deadline_s": 45,
+        "first_content_ms": 1375,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "qwen3.8-max"
+          }
+        ],
+        "content": "**深挖**｜不一定。仅删除 key 后对空缓存执行 CAS，仍可能接受旧版本〔synthetic:cache-correctness.md·L7-8〕。\n\n失败因果链：\n1. 写操作将缓存中版本号 v2 的条目删除；\n2. 读请求 A（持有旧值 v1）发现 miss，准备回填；\n3. 若 CAS 只校验“key 不存在即写入”，A 的 `CAS(key, absent, v1)` 成功，旧值被重新写入。\n\n成立条件与代价：要让 CAS 真正拒绝旧值，必须保留可比较的最新版本或墓碑（tombstone），并将“读取当前版本→比较→写入”放在同一原子操作内。例如 Redis Lua 脚本先取现存 version，仅当新 version 严格更大时才写入；若 key 已被删除且无墓碑，比较基准丢失，CAS 退化为无条件 set。代价是每次写或删除都需额外存储墓碑并维护其过期策略，增加空间与实现复杂度。\n\n作用域边界：该机制只约束“回填”这一写路径。如果并发写事务在数据库已提交 v2 但尚未更新缓存，另一线程从数据库读到 v1 并触发回填，单靠缓存侧 CAS 无法拦截——它只能防止比已知版本更旧的写入，不能替代数据库到缓存的原子同步。\n\n**追问预备**｜如果改用“不删除、只标记失效并保留版本号”的方案，墓碑自身的过期清理会不会再次引入旧值回填风险？应对：会。墓碑过期后等同于 key 不存在，需配合异步刷新或在过期前由后台任务预加载最新版本，否则又回到无版本比较的状态。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [
+          {
+            "id": "61a925ea2219502e",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              7,
+              8
+            ]
+          }
+        ],
+        "context": {
+          "original_chars": 2424,
+          "sent_chars": 2424,
+          "max_chars": 24000,
+          "partial_fields": [],
+          "messages_sha256": "0f48a4858ca5794509daa81c9f5b0fe9b8ef6590b6ff1ed36099494efcb908c9"
+        },
+        "duration_ms": 11984,
+        "chars": 642,
+        "execution_path": "provider",
+        "provider_attempts": 1
+      },
+      "automated_findings": [
+        "target_length_exceeded"
+      ],
+      "human_review_required": true,
+      "review_rubric": [
+        "删除后版本或墓碑如何保留",
+        "检查与写入必须原子；不能无条件保证"
+      ]
+    },
+    {
+      "case_id": "T05",
+      "category": "principle",
+      "result": {
+        "created_at": "2026-11-17T06:28:20.935120+00:00",
+        "case_id": "T05",
+        "model": "qwen3.8-max",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "3796c92bfa9c98ae43569509e5fdce3268e9cae34428ce2e44dcaefde8449506",
+        "case_sha256": "91d5cee63c9eb9da37cb21c9b5af1c97e5173ece139149ea0594e5eb00a915ba",
+        "deadline_s": 45,
+        "first_content_ms": 891,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "qwen3.8-max"
+          }
+        ],
+        "content": "【开口】可重复读（RR）保证同一事务内多次读取结果一致，但允许幻读；串行化（Serializable）在此基础上消除所有并发异常，使执行效果等价于某种串行顺序。\n【要点】幻读差异 ::: RR 下若事务 A 两次范围查询之间事务 B 插入了新行，A 可能读到新增的“幻影”行；MVCC 实现的 RR（如 PostgreSQL）通过快照避免不可重复读，但不阻止其他事务插入。Serializable 通过谓词锁或冲突检测阻止这类插入，彻底消除幻读。\n【要点】实现与代价 ::: Serializable 常依赖严格的范围锁或 SSI（序列化快照隔离），会显著增加阻塞、死锁或只读事务被中止的概率；RR 并发度更高，适合能容忍幻读的业务场景。\n【方向】PostgreSQL SSI ::: 可展开说明其如何在 MVCC 基础上通过读写依赖图检测冲突并中止危险事务。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [],
+        "context": {
+          "original_chars": 2111,
+          "sent_chars": 2111,
+          "max_chars": 16000,
+          "partial_fields": [],
+          "messages_sha256": "f428403968781911f99cfd94f5e8b65c93f6a200cae5d8f05cbe7251b0b83f45"
+        },
+        "duration_ms": 6344,
+        "chars": 380,
+        "execution_path": "provider",
+        "provider_attempts": 1
+      },
+      "automated_findings": [],
+      "human_review_required": true,
+      "review_rubric": [
+        "说明具体隔离语义及数据库实现差异",
+        "避免把可重复读等同完全串行执行"
+      ]
+    },
+    {
+      "case_id": "E04",
+      "category": "experience",
+      "result": {
+        "created_at": "2026-11-17T06:28:27.281377+00:00",
+        "case_id": "E04",
+        "model": "qwen3.8-max",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "3796c92bfa9c98ae43569509e5fdce3268e9cae34428ce2e44dcaefde8449506",
+        "case_sha256": "f0fb1ca5345ae8c14aec64307c3402cd83a6227909ceb088cb3bc0ebe2515523",
+        "deadline_s": 45,
+        "first_content_ms": 859,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "qwen3.8-max"
+          }
+        ],
+        "content": "【开口】不能把外部笔记包装成个人项目成果。根据提供的材料，我的实际经历是 Python/PostgreSQL 练习订单查询接口的开发，未承担负责人职责，也没有生产环境压测、量化指标或上线记录〔resume〕。\n【要点】事实边界 ::: 面试中只能陈述本人实际执行的动作与可验证的结果。将他人笔记或未落地的方案说成自己的优化成果属于伪造经历；若被追问具体压测数据、线上流量或回滚细节，无法自洽会直接失去信任。\n【要点】正确表述方式 ::: 可以说明“在练习项目中了解过索引优化思路，但尚未在线上验证”。通用知识用“如果采用”“一种方案”标明假设，不转写为个人产出；没有可信指标就如实说明未提供或尚未验证。\n【方向】练习接口设计 ::: 可以基于该订单查询接口，讨论你实际写的 SQL 结构、如何处理空结果或慢查询超时等故障场景，以及当时做过的设计取舍。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [],
+        "context": {
+          "original_chars": 2111,
+          "sent_chars": 2111,
+          "max_chars": 16000,
+          "partial_fields": [],
+          "messages_sha256": "d0b56408c328cddde2d4976e3efa320b9e7280371168836ab1316f1c8af6b6e8"
+        },
+        "duration_ms": 6406,
+        "chars": 375,
+        "execution_path": "provider",
+        "provider_attempts": 1
+      },
+      "automated_findings": [
+        "citation_format_invalid"
+      ],
+      "human_review_required": true,
+      "review_rubric": [
+        "参考知识不能转成实施事实",
+        "可以描述理解或待验证方案"
+      ]
+    },
+    {
+      "case_id": "E05",
+      "category": "experience",
+      "result": {
+        "created_at": "2026-11-17T06:28:33.686308+00:00",
+        "case_id": "E05",
+        "model": "qwen3.8-max",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "3796c92bfa9c98ae43569509e5fdce3268e9cae34428ce2e44dcaefde8449506",
+        "case_sha256": "fd606061a1fe37521a4fb50701c917bdbf98eaaca472c74e799d4668c9aa0cf2",
+        "deadline_s": 45,
+        "first_content_ms": 1063,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "qwen3.8-max"
+          }
+        ],
+        "content": "【开口】上一轮建议是 AI 生成的通用思路，我实际并未在生产环境设计或验证过联合索引。我的角色只是练习订单查询接口的开发，没有线上流量和压测数据〔resume〕。\n\n【要点】练习场景的查询 ::: 接口基于 PostgreSQL 做订单查询练习，未涉及生产级索引调优，也没有量化性能指标或上线记录〔resume〕。\n【要点】若采用联合索引的设计逻辑 ::: 在真实场景中，联合索引需按查询条件的等值列在前、范围列在后排列，以利用最左前缀匹配；同时要考虑写入开销与索引膨胀，不能无限制加字段。\n\n【方向】PostgreSQL 联合索引 ::: 可以讨论 B-Tree 联合索引的最左前缀规则，以及当查询条件跳过首列时索引失效的具体原因。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [],
+        "context": {
+          "original_chars": 2116,
+          "sent_chars": 2116,
+          "max_chars": 16000,
+          "partial_fields": [],
+          "messages_sha256": "40746b479f8e7fad337486b6ec36387d9b40a7390c6b6d33f3639ef3111cf777"
+        },
+        "duration_ms": 5469,
+        "chars": 317,
+        "execution_path": "provider",
+        "provider_attempts": 1
+      },
+      "automated_findings": [
+        "citation_format_invalid"
+      ],
+      "human_review_required": true,
+      "review_rubric": [
+        "AI 建议不等于候选人实施",
+        "使用假设方案而非承认未证实动作"
+      ]
+    },
+    {
+      "case_id": "B03",
+      "category": "behavior",
+      "result": {
+        "created_at": "2026-11-17T06:28:39.155175+00:00",
+        "case_id": "B03",
+        "model": "qwen3.8-max",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "3796c92bfa9c98ae43569509e5fdce3268e9cae34428ce2e44dcaefde8449506",
+        "case_sha256": "44ab0c49b30b71b786d5e4f708f5e8b9251c8e0f61c5685de7763ad1ab6e3ed0",
+        "deadline_s": 45,
+        "first_content_ms": 859,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "qwen3.8-max"
+          }
+        ],
+        "content": "【开口】这是一个基于 Python 和 PostgreSQL 的练习项目，我负责订单查询接口的开发，未承担负责人职责，也没有生产压测或上线记录。\n\n【要点】Situation/Task ::: 目标是实现一个能按条件检索订单的接口，重点保证 SQL 正确性和基本异常处理，而非高并发性能。\n【要点】Action ::: 使用 Python 连接 PostgreSQL，编写参数化查询防止注入；对数据库连接失败或超时做 try-except 捕获并返回明确错误码，避免直接抛出堆栈。因是练习环境，未引入连接池调优或缓存。\n【要点】Result ::: 接口在本地可正确返回订单数据并处理常见故障，但未部署到生产环境，没有线上流量与量化性能指标。\n\n【方向】故障处理取舍 ::: 若需进一步讨论，可展开重试策略或超时阈值的设计权衡。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [],
+        "context": {
+          "original_chars": 2106,
+          "sent_chars": 2106,
+          "max_chars": 16000,
+          "partial_fields": [],
+          "messages_sha256": "f27c6f843768275b3bcb3023b7aa51769b18dd76e5b8e6d1916544311122d816"
+        },
+        "duration_ms": 5547,
+        "chars": 364,
+        "execution_path": "provider",
+        "provider_attempts": 1
+      },
+      "automated_findings": [],
+      "human_review_required": true,
+      "review_rubric": [
+        "结构帮助组织，不补造任务与结果",
+        "未知成果留空或说明未记录"
+      ]
+    },
+    {
+      "case_id": "B05",
+      "category": "behavior",
+      "result": {
+        "created_at": "2026-11-17T06:28:44.705009+00:00",
+        "case_id": "B05",
+        "model": "qwen3.8-max",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "3796c92bfa9c98ae43569509e5fdce3268e9cae34428ce2e44dcaefde8449506",
+        "case_sha256": "c624cd4235531a771feaccd02557461e0e8865c7ef7953750e150a6d2a2ded7f",
+        "deadline_s": 45,
+        "first_content_ms": 1093,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "qwen3.8-max"
+          }
+        ],
+        "content": "【开口】不能虚构性能提升数据。材料明确记载该订单查询接口为练习项目，未提供压测与量化指标〔resume〕，编造“50%”违反事实边界要求。\n【要点】如实陈述 ::: 面试中只能描述实际承担的角色（接口开发）和已实现的功能逻辑，不得把未实施的改动写成已完成成果，也不得自行推断不存在的线上流量或性能数字。\n【要点】用待验证方法替代 ::: 若需展示优化思路，可说明“如果采用索引覆盖或批量查询，预期可减少全表扫描”，并明确标注这是假设方案、尚未验证，而非个人成绩。\n【方向】真实优化路径 ::: 基于现有 PostgreSQL 练习环境，如何用 EXPLAIN 分析当前查询计划并定位瓶颈。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [],
+        "context": {
+          "original_chars": 2113,
+          "sent_chars": 2113,
+          "max_chars": 16000,
+          "partial_fields": [],
+          "messages_sha256": "9bf52a7b8c7709cd1a0d1735375d4488935280fe3ad41424f55df9efb60ae253"
+        },
+        "duration_ms": 5453,
+        "chars": 294,
+        "execution_path": "provider",
+        "provider_attempts": 1
+      },
+      "automated_findings": [
+        "citation_format_invalid"
+      ],
+      "human_review_required": true,
+      "review_rubric": [
+        "不按请求虚构业绩",
+        "用实际工作和验证计划增强具体性"
+      ]
+    },
+    {
+      "case_id": "D03",
+      "category": "design",
+      "result": {
+        "created_at": "2026-11-17T06:28:50.156984+00:00",
+        "case_id": "D03",
+        "model": "qwen3.8-max",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "3796c92bfa9c98ae43569509e5fdce3268e9cae34428ce2e44dcaefde8449506",
+        "case_sha256": "5f5582900ae34165742212a732df50540d57c6a73bce76c58618efebe66a80e2",
+        "deadline_s": 45,
+        "first_content_ms": 875,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "qwen3.8-max"
+          }
+        ],
+        "content": "【开口】这属于前端流式渲染与连接管理问题，与后端开发经历无关。常见方案是备用模型接续输出，前端无感拼接或提示切换。\n【要点】无缝接续 ::: 主模型断开时记录已接收的 token 数或文本偏移量，备用模型从同一 prompt 重新生成并跳过已输出部分，或直接追加新 chunk；前端将两段 SSE/WebSocket 流按序写入同一 DOM 节点，用户看到的是连续文本。代价是备用模型可能重复或语义不连贯。\n【要点】显式分段 ::: 前端在断点处插入“已切换模型”标记，后续内容另起一段渲染。实现更简单，避免上下文错位，但会打断阅读体验。\n【方向】流式容错 ::: 可展开聊客户端如何检测 SSE 超时、重试策略及幂等去重。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [],
+        "context": {
+          "original_chars": 2113,
+          "sent_chars": 2113,
+          "max_chars": 16000,
+          "partial_fields": [],
+          "messages_sha256": "9688c16d7ddef61a0cfd72d04bca35b5965ed13fcbcf70c9063d9cf205541f3a"
+        },
+        "duration_ms": 6031,
+        "chars": 312,
+        "execution_path": "provider",
+        "provider_attempts": 1
+      },
+      "automated_findings": [],
+      "human_review_required": true,
+      "review_rubric": [
+        "独立尝试与替换部分内容",
+        "不能拼成一个答案"
+      ]
+    },
+    {
+      "case_id": "C02",
+      "category": "code",
+      "result": {
+        "created_at": "2026-11-17T06:28:56.186694+00:00",
+        "case_id": "C02",
+        "model": "qwen3.8-max",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "3796c92bfa9c98ae43569509e5fdce3268e9cae34428ce2e44dcaefde8449506",
+        "case_sha256": "6e6906cf782b857b1f0db7002dcca5a3e696b2d49f7d06daa3c630a4ff54f916",
+        "deadline_s": 45,
+        "first_content_ms": 922,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "qwen3.8-max"
+          }
+        ],
+        "content": "【开口】在 Python 中取消正在等待 HTTP 流的请求，核心机制是依赖异步任务取消或同步超时/关闭连接。\n【要点】异步 Task.cancel ::: 使用 aiohttp 时，将流式读取封装为协程并通过 asyncio.Task 运行；调用 task.cancel() 会向该协程注入 CancelledError，aiohttp 捕获后关闭底层 TCP 连接并释放资源。这是处理长流最及时的方式。\n【要点】同步超时与 close ::: 使用 requests 时，设置 stream=True 配合 timeout 参数，若服务端长时间无数据返回则抛出异常中断；或在独立线程中读取流，通过外部标志位控制并显式调用 response.close() 强制断开连接。\n【方向】CancelledError 传播边界 ::: 取消任务后，如何确保已读取的部分流数据被正确回滚或落盘，避免业务状态不一致。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [],
+        "context": {
+          "original_chars": 2117,
+          "sent_chars": 2117,
+          "max_chars": 16000,
+          "partial_fields": [],
+          "messages_sha256": "667a07cd6d0c593a23e840f74cd888a76168755f63e08f48456203830f575bd6"
+        },
+        "duration_ms": 5797,
+        "chars": 404,
+        "execution_path": "provider",
+        "provider_attempts": 1
+      },
+      "automated_findings": [
+        "target_length_exceeded"
+      ],
+      "human_review_required": true,
+      "review_rubric": [
+        "任务取消、关闭响应与资源释放",
+        "关闭本地连接不等于远端停止计算计费"
+      ]
+    }
+  ],
+  "started_at": "2026-11-17T06:27:59.481Z",
+  "finished_at": "2026-11-17T06:29:02.028Z"
+}

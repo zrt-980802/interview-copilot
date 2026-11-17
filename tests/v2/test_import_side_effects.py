@@ -150,6 +150,17 @@ def test_import_and_factory_are_side_effect_free(tmp_path: Path) -> None:
             import interview_copilot.app
             import interview_copilot.lifecycle
             import interview_copilot.settings
+            import interview_copilot.services.interview
+            import interview_copilot.services.event_stream
+            import interview_copilot.services.history
+            import interview_copilot.services.workers
+            import interview_copilot.legacy.uploads
+            sys.path.insert(0, str(repo_root))
+            import copilot.history
+            import copilot.audio
+            import copilot.llm
+            import server
+            assert server._RUNTIME is None
             from fastapi import FastAPI
 
             settings = interview_copilot.Settings()

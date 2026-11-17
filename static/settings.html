@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>模型设置 · 面试辅助</title>
+  <link rel="stylesheet" href="/static/settings.css">
+  <script src="/static/vendor/lucide.js" defer></script>
+  <script src="/static/js/settings.js" type="module"></script>
+</head>
+<body>
+  <header><a href="/" class="icon" title="返回工作区" aria-label="返回工作区"><i data-lucide="arrow-left"></i></a>
+    <h1>模型设置</h1><span id="mode" hidden>离线演示 · 临时配置 · 模拟连接</span>
+    <button id="reload" class="icon" title="重新加载配置" aria-label="重新加载配置"><i data-lucide="refresh-cw"></i></button>
+  </header>
+  <main>
+    <div id="notice" role="status" aria-live="polite">正在加载配置…</div>
+    <form id="providerForm" autocomplete="off">
+      <fieldset id="fields" disabled>
+        <section>
+          <div class="section-heading"><h2>主服务</h2><span id="primaryStatus" class="key-state"></span></div>
+          <div class="fields">
+            <label>Provider<select id="preset"><option value="custom">自定义 / OpenAI 兼容</option>
+              <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="zhipu">智谱</option></select></label>
+            <label class="wide">API 地址<input id="base_url" type="url" required spellcheck="false" maxlength="2048" placeholder="https://api.example.com/v1"></label>
+            <label class="wide">API Key<div class="key-input"><input id="api_key" type="password" autocomplete="new-password" maxlength="8192" placeholder="未配置" spellcheck="false">
+              <button type="button" id="clear_api_key" class="icon" title="清除主服务密钥" aria-label="清除主服务密钥" aria-pressed="false"><i data-lucide="trash-2"></i></button></div></label>
+            <label>快速模型<input id="quick_model" list="primaryModels" required maxlength="200" spellcheck="false"></label>
+            <label>深入模型<input id="detail_model" list="primaryModels" required maxlength="200" spellcheck="false"></label>
+          </div>
+          <datalist id="primaryModels"></datalist>
+          <div class="service-actions"><label class="check"><input id="allow_anonymous" type="checkbox">无需 API Key</label>
+            <button type="button" class="command" data-action="models" data-channel="primary"><i data-lucide="list"></i>获取模型</button>
+            <button type="button" class="command" data-action="test" data-channel="primary"><i data-lucide="plug-zap"></i>测试连接</button>
+          </div>
+          <div id="primaryResult" class="probe-result" role="status" aria-live="polite"></div>
+        </section>
+        <section>
+          <div class="section-heading"><h2>备用服务</h2><label class="check"><input id="fallback_enabled" type="checkbox">启用</label><span id="fallbackStatus" class="key-state"></span></div>
+          <div id="fallbackFields" hidden>
+            <div class="fields">
+              <label class="wide">API 地址<input id="fallback_base_url" type="url" spellcheck="false" maxlength="2048" placeholder="https://api.example.com/v1"></label>
+              <label class="wide">API Key<div class="key-input"><input id="fallback_api_key" type="password" autocomplete="new-password" maxlength="8192" placeholder="未配置" spellcheck="false">
+                <button type="button" id="clear_fallback_api_key" class="icon" title="清除备用密钥" aria-label="清除备用密钥" aria-pressed="false"><i data-lucide="trash-2"></i></button></div></label>
+              <label class="wide">备用模型<input id="fallback_model" list="fallbackModels" maxlength="200" spellcheck="false"></label>
+            </div>
+            <datalist id="fallbackModels"></datalist>
+            <div class="service-actions"><label class="check"><input id="fallback_allow_anonymous" type="checkbox">无需 API Key</label>
+              <button type="button" class="command" data-action="models" data-channel="fallback"><i data-lucide="list"></i>获取模型</button>
+              <button type="button" class="command" data-action="test" data-channel="fallback"><i data-lucide="plug-zap"></i>测试连接</button>
+            </div>
+            <div id="fallbackResult" class="probe-result" role="status" aria-live="polite"></div>
+          </div>
+        </section>
+        <div class="save-bar"><label class="check"><input id="remember" type="checkbox" checked>新密钥在本机加密保存</label>
+          <button id="save" class="command primary" type="submit"><i data-lucide="save"></i>保存配置</button></div>
+      </fieldset>
+    </form>
+  </main>
+</body>
+</html>

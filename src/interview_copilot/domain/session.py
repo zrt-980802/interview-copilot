@@ -108,6 +108,9 @@ class SessionState:
             raise ValueError("task_id must be a non-empty string")
         self._task_registry[task_id] = handle
 
+    def remove_task(self, task_id: str) -> None:
+        self._task_registry.pop(task_id, None)
+
     def clear(self) -> None:
         """Forget per-session data.
 
@@ -115,6 +118,7 @@ class SessionState:
         ``task_registry`` (and cancel through the owning loop) *before*
         calling this, because the registry is emptied here.
         """
+        self._generation += 1
         self._history.clear()
         self._active_turn_id = None
         self._current_answer = None

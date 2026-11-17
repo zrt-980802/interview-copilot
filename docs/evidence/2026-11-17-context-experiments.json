@@ -1,0 +1,981 @@
+{
+  "schema_version": 1,
+  "material_policy": "synthetic_only",
+  "records": [
+    {
+      "variant": "m3-2",
+      "suite_sha256": "f54b3d4f193660b1f48c47db1b846c3e5c47d13d9eaa20f88226e76d3f6e8dd3",
+      "case_id": "T04",
+      "category": "principle",
+      "result": {
+        "created_at": "2026-11-17T05:55:05.644246+00:00",
+        "case_id": "T04",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "fc3ee12e3647c7ee24278a6af1f51c42d93eb5709a0238889f66fc73e1359cc0",
+        "case_sha256": "c5b5919b25f31f4ca76319ff934edcb5baf2fc1cc2b827cfbbf119be540b4725",
+        "deadline_s": 45,
+        "first_content_ms": 3234,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "**深挖**｜不一定。版本号加 CAS 只能把“比较版本”和“写入”合成一个原子动作，前提是缓存里始终保留一个可比较的最新版本或墓碑〔synthetic:cache-correctness.md·L7-8〕。若删除 key 后缓存为空，回填方对空缓存做 CAS，没有旧版本可比，旧值仍可能被接受。反例：读请求 R 在数据库读到 v1 快照后挂起；写请求把库更新到 v2 并删除缓存；R 恢复后带着 v1 回填，此时缓存为空，CAS 缺少可比较基准，v1 被写入。要堵住这个窗口，需要保留 v2 的墓碑或版本记录，让 v1 的比较失败；同时锁或租约要覆盖读、写和回填，并明确超时与失效条件，否则锁过期后旧回填仍可能进入。\n\n还要区分作用域：single-flight 只合并同 key 的并发读加载，降低击穿，不协调数据库写入与回填，不能保证读写强一致〔synthetic:cache-correctness.md·L5-6〕。TTL 也不是收敛上界：它从某次缓存写入起算，若读时延、复制延迟或再次回填无界，就无法给出从数据库提交起算的固定上界〔synthetic:cache-correctness.md·L3-4〕。因此“版本号+CAS”是缓解手段，成立条件是版本记录不丢、比较与写入原子、锁覆盖完整；缺一项就可能回填旧值。要求强一致的读应绕过缓存，读具有所需隔离语义的权威存储。\n\n**追问预备**｜问“锁超时后旧回填怎么办？”应对：说明锁只覆盖持锁期间，超时后需靠墓碑版本拒绝旧值，或让回填携带读取时的版本并与当前版本比较；若两者都缺失，就承认该窗口存在，不宣称绝对无竞态。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [
+          {
+            "id": "61a925ea2219502e",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              7,
+              8
+            ]
+          },
+          {
+            "id": "85b9a3aab0bc5099",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              1,
+              2
+            ]
+          },
+          {
+            "id": "cc9aa83c72502bc9",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              5,
+              6
+            ]
+          },
+          {
+            "id": "30471352551a79fc",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              3,
+              4
+            ]
+          }
+        ],
+        "context": {
+          "original_chars": 2749,
+          "sent_chars": 2749,
+          "max_chars": 24000,
+          "partial_fields": [],
+          "messages_sha256": "023f9cd5f9474e9a97f1288d4457dc18df05bba9d7c32db880b57b5b54d29a3f"
+        },
+        "duration_ms": 5953,
+        "chars": 690
+      },
+      "automated_findings": [
+        "target_length_exceeded"
+      ],
+      "human_review_required": true,
+      "review_rubric": [
+        "删除后版本或墓碑如何保留",
+        "检查与写入必须原子；不能无条件保证"
+      ]
+    },
+    {
+      "variant": "m3-3",
+      "suite_sha256": "f54b3d4f193660b1f48c47db1b846c3e5c47d13d9eaa20f88226e76d3f6e8dd3",
+      "case_id": "T04",
+      "category": "principle",
+      "result": {
+        "created_at": "2026-11-17T05:55:12.140756+00:00",
+        "case_id": "T04",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "9353d21bb2e59247e34de0487d5b4442a9b6eda2c0ab0c1bc3f2f78581502dea",
+        "case_sha256": "c5b5919b25f31f4ca76319ff934edcb5baf2fc1cc2b827cfbbf119be540b4725",
+        "deadline_s": 45,
+        "first_content_ms": 5000,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "**深挖**｜不一定。版本号加 CAS 只能拒绝“版本号可比较且比较对象仍在”的旧值，不能覆盖删除后缓存为空、旧读请求才回填的时序。\n\n主要因果链：读请求 R 先读到数据库旧快照 v1，写请求 W 提交 v2 并删除缓存；R 随后回填，此时 key 已空，若实现把“空”当作可接受状态直接写入，v1 就被接受。要挡住它，必须保留最新版本号或墓碑，并把“比较版本 + 写入”做成原子操作〔synthetic:cache-correctness.md·L7-L8〕。反例成立的条件是版本信息随删除一起丢失；若墓碑保留且 CAS 原子，v1 会被拒，但代价是删除后仍需维护墓碑、处理其过期与清理。\n\n另一条独立竞态是 W 删除缓存与 R 回填的先后交错，版本校验本身不消除它，只让回填可被判定为旧值。若要求强一致读，可绕过缓存读权威存储〔synthetic:cache-correctness.md·L5-L6〕；TTL 也不能给出从数据库提交起算的固定收敛上界，除非读时延、复制延迟和回填都有界〔synthetic:cache-correctness.md·L3-L4〕。\n\n**追问预备**｜“墓碑什么时候能安全删除？”——需说明所有可能携带旧版本的读请求都已结束或有明确时限，否则删除墓碑会重新打开旧值回填窗口。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [
+          {
+            "id": "61a925ea2219502e",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              7,
+              8
+            ]
+          },
+          {
+            "id": "85b9a3aab0bc5099",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              1,
+              2
+            ]
+          },
+          {
+            "id": "cc9aa83c72502bc9",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              5,
+              6
+            ]
+          },
+          {
+            "id": "30471352551a79fc",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              3,
+              4
+            ]
+          }
+        ],
+        "context": {
+          "original_chars": 3071,
+          "sent_chars": 3071,
+          "max_chars": 24000,
+          "partial_fields": [],
+          "messages_sha256": "76764ce21a77ae32b935d0a8d1ad89e526c32e39dcb43f9c98656eb822694c43"
+        },
+        "duration_ms": 7375,
+        "chars": 556
+      },
+      "automated_findings": [],
+      "human_review_required": true,
+      "review_rubric": [
+        "删除后版本或墓碑如何保留",
+        "检查与写入必须原子；不能无条件保证"
+      ]
+    },
+    {
+      "variant": "m3-2",
+      "suite_sha256": "f54b3d4f193660b1f48c47db1b846c3e5c47d13d9eaa20f88226e76d3f6e8dd3",
+      "case_id": "T03",
+      "category": "principle",
+      "result": {
+        "created_at": "2026-11-17T05:57:25.032120+00:00",
+        "case_id": "T03",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "fc3ee12e3647c7ee24278a6af1f51c42d93eb5709a0238889f66fc73e1359cc0",
+        "case_sha256": "e48085cf37902d8e83194f09d7d1d57baba5dfb7b2bc945cb53f204c8d6c597c",
+        "deadline_s": 45,
+        "first_content_ms": 3187,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "**深挖**｜不是。single-flight 只合并同 key 的并发读加载，减少缓存击穿；它不协调数据库写入与回填，因此不提供读写强一致〔reference·L5-6〕。\n\n具体反例：读请求 R 未命中，进入 single-flight 加载，从数据库读到旧快照 v1；此时写请求 W 提交 v2 并删除缓存；R 随后把 v1 回填。删除发生在回填之前，缓存最终长期是旧值——single-flight 全程正常，问题出在它管不到“写后删缓存”和“读回填”的时序〔reference·L1-2〕。所以“先提交数据库再删缓存”也不够，必须讲清时序或加版本约束。\n\nTTL 也不是无条件兜底：TTL 从某次缓存写入起算，若读时延、复制延迟或再次回填没有界限，就不能给出从数据库提交起算的固定收敛上界〔reference·L3-4〕。版本校验要保留可比较的最新版本或墓碑，并原子地检查与写入；只删 key 再对空缓存做 CAS，仍可能接受旧版本〔reference·L7-8〕。要求强一致的读，可绕过缓存直接读具备所需隔离语义的权威存储。\n\n**追问预备**｜“那你怎么保证不读到旧值？”应对：先明确一致性等级——强一致读走数据库；缓存只服务可容忍短暂陈旧、且有版本校验或明确 TTL 条件的读。若用锁，说明锁覆盖读、写、回填全链路，以及超时、租约和失效条件，不把缓解说成保证。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [
+          {
+            "id": "cc9aa83c72502bc9",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              5,
+              6
+            ]
+          },
+          {
+            "id": "85b9a3aab0bc5099",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              1,
+              2
+            ]
+          },
+          {
+            "id": "30471352551a79fc",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              3,
+              4
+            ]
+          },
+          {
+            "id": "61a925ea2219502e",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              7,
+              8
+            ]
+          }
+        ],
+        "context": {
+          "original_chars": 2755,
+          "sent_chars": 2755,
+          "max_chars": 24000,
+          "partial_fields": [],
+          "messages_sha256": "696f841ab9bc181cf9dc75d7e6980e40fb8c21c5dfae825c242d4512cd423c1f"
+        },
+        "duration_ms": 6156,
+        "chars": 588
+      },
+      "automated_findings": [
+        "citation_outside_retrieved_evidence"
+      ],
+      "human_review_required": true,
+      "review_rubric": [
+        "合并读请求和协调写入是不同作用域",
+        "提供读写回填竞态反例"
+      ]
+    },
+    {
+      "variant": "m3-3",
+      "suite_sha256": "f54b3d4f193660b1f48c47db1b846c3e5c47d13d9eaa20f88226e76d3f6e8dd3",
+      "case_id": "T03",
+      "category": "principle",
+      "result": {
+        "created_at": "2026-11-17T05:57:31.708215+00:00",
+        "case_id": "T03",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "9353d21bb2e59247e34de0487d5b4442a9b6eda2c0ab0c1bc3f2f78581502dea",
+        "case_sha256": "e48085cf37902d8e83194f09d7d1d57baba5dfb7b2bc945cb53f204c8d6c597c",
+        "deadline_s": 45,
+        "first_content_ms": 2344,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "**深挖**｜不是。single-flight 只合并同 key 的并发读加载，减少缓存击穿，不协调数据库写入与缓存回填，因此不能保证读写强一致〔synthetic:cache-correctness.md·L5-6〕。\n\n主要因果链：写请求先提交数据库再删缓存，但某个读请求可能在删除前已从数据库取到旧快照，删除后才把旧值回填，缓存就长期保留旧值〔synthetic:cache-correctness.md·L1-2〕。single-flight 只保证同一时刻只有一个读加载在跑，这个加载本身仍可能基于旧快照，所以合并并发并不消除该时序。\n\nTTL 也不是固定收敛上界：它从某次缓存写入起算，若读时延、复制延迟或再次回填没有界限，就无法给出从数据库提交起算的固定上界〔synthetic:cache-correctness.md·L3-4〕。若要求强一致读，可绕过缓存读具有所需隔离语义的权威存储；若坚持缓存，则需版本校验：保留可比较的最新版本或墓碑，原子地检查并写入，且锁覆盖相关读写与回填，并说明超时、租约和失效条件〔synthetic:cache-correctness.md·L7-8〕。\n\n**追问预备**｜“只删 key 再做 CAS 行不行？”——不行，空缓存上执行 CAS 仍可能接受旧版本，必须保留可比较版本或墓碑。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [
+          {
+            "id": "cc9aa83c72502bc9",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              5,
+              6
+            ]
+          },
+          {
+            "id": "85b9a3aab0bc5099",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              1,
+              2
+            ]
+          },
+          {
+            "id": "30471352551a79fc",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              3,
+              4
+            ]
+          },
+          {
+            "id": "61a925ea2219502e",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              7,
+              8
+            ]
+          }
+        ],
+        "context": {
+          "original_chars": 3077,
+          "sent_chars": 3077,
+          "max_chars": 24000,
+          "partial_fields": [],
+          "messages_sha256": "ae378fa8852abc779c60b3eed9c83de0448dfe5e414c89ca54b12fd19ac2776a"
+        },
+        "duration_ms": 4250,
+        "chars": 570
+      },
+      "automated_findings": [],
+      "human_review_required": true,
+      "review_rubric": [
+        "合并读请求和协调写入是不同作用域",
+        "提供读写回填竞态反例"
+      ]
+    },
+    {
+      "variant": "m3-2",
+      "suite_sha256": "f54b3d4f193660b1f48c47db1b846c3e5c47d13d9eaa20f88226e76d3f6e8dd3",
+      "case_id": "A01",
+      "category": "ambiguous",
+      "result": {
+        "created_at": "2026-11-17T05:57:36.507390+00:00",
+        "case_id": "A01",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "5025350d30f49a73074f8389f67d4a49fd034ba4534c972b4820c39bfd1e34d3",
+        "case_sha256": "273301f438510c2754a01630b1a86f4899b6c6d816251a25f5e88c1eb9834b49",
+        "deadline_s": 45,
+        "first_content_ms": 1297,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "【开口】你问的“这样做”目前没有可还原的指代，我无法判断是在问订单查询接口的哪项设计。\n【要点】请说明具体对象 ::: 例如是分页查询、索引、事务边界还是错误处理，并指出对应做法。\n【方向】补充上下文 ::: 给出该做法的代码片段或设计描述，我再解释其机制、取舍与适用条件。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [],
+        "context": {
+          "original_chars": 1750,
+          "sent_chars": 1750,
+          "max_chars": 16000,
+          "partial_fields": [],
+          "messages_sha256": "88059cad5e768dd90558616ad5f5577cf8dbea3fabb271c47d5e3f8db4eed32d"
+        },
+        "duration_ms": 2188,
+        "chars": 137
+      },
+      "automated_findings": [],
+      "human_review_required": true,
+      "review_rubric": [
+        "没有前文时不能凭空确定指代",
+        "提出一项必要澄清而非泛泛长答"
+      ]
+    },
+    {
+      "variant": "m3-3",
+      "suite_sha256": "f54b3d4f193660b1f48c47db1b846c3e5c47d13d9eaa20f88226e76d3f6e8dd3",
+      "case_id": "A01",
+      "category": "ambiguous",
+      "result": {
+        "created_at": "2026-11-17T05:57:39.237064+00:00",
+        "case_id": "A01",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "25852414481da082455215c567b195419010b66b74587d6420ec4be564cb90ca",
+        "case_sha256": "273301f438510c2754a01630b1a86f4899b6c6d816251a25f5e88c1eb9834b49",
+        "deadline_s": 45,
+        "first_content_ms": 1266,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "【开口】你问的“这样做”目前没有可还原的指代，我不确定你指的是哪项设计或改动，需要你先说明具体对象。\n【要点】澄清对象 ::: 请指出是订单查询接口的 SQL 写法、索引、分页、事务边界，还是其他方案；我才能解释其机制、适用条件和代价。\n【方向】补充上下文 ::: 给出该做法的代码或描述，以及要解决的问题（如正确性、延迟或故障处理），我再按约束逐项说明。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [],
+        "context": {
+          "original_chars": 2023,
+          "sent_chars": 2023,
+          "max_chars": 16000,
+          "partial_fields": [],
+          "messages_sha256": "d7808e4ed0ea2b1bbdc18af64a872d158a9f349c6e4ef792027ecb75509d74cc"
+        },
+        "duration_ms": 2141,
+        "chars": 178
+      },
+      "automated_findings": [],
+      "human_review_required": true,
+      "review_rubric": [
+        "没有前文时不能凭空确定指代",
+        "提出一项必要澄清而非泛泛长答"
+      ]
+    },
+    {
+      "variant": "m3-2",
+      "suite_sha256": "f54b3d4f193660b1f48c47db1b846c3e5c47d13d9eaa20f88226e76d3f6e8dd3",
+      "case_id": "E02",
+      "category": "experience",
+      "result": {
+        "created_at": "2026-11-17T05:57:41.900243+00:00",
+        "case_id": "E02",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "5025350d30f49a73074f8389f67d4a49fd034ba4534c972b4820c39bfd1e34d3",
+        "case_sha256": "eba3c8b383dc0b027f6b168cc7e08468d05dd8c52ed4b37e2aea256641de0caa",
+        "deadline_s": 45,
+        "first_content_ms": 984,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "【开口】材料没有提供线上流量和上线记录，不能据此推断“从未上线”；我能确认的只有：这是 Python/PostgreSQL 订单查询接口练习，我承担接口开发，未担任负责人。\n【要点】事实边界 ::: 未提供压测数据、量化指标和上线记录，不等于这些一定没发生；回答时应说明资料未记载，而不是补写结论。\n【要点】可验证做法 ::: 若被追问上线情况，我会先说明现有材料范围，再给出可核验证据，如部署记录、监控截图或压测报告；没有就明确说没有。\n【方向】正确性验证 ::: 可展开订单查询接口在并发、重复请求和数据库异常下的正确性测试设计。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [],
+        "context": {
+          "original_chars": 1764,
+          "sent_chars": 1764,
+          "max_chars": 16000,
+          "partial_fields": [],
+          "messages_sha256": "7e98cabf6e51dcd7f6a0a9cb3c0194ce9a8c86e693ecd39b9c291fceb1265df0"
+        },
+        "duration_ms": 2547,
+        "chars": 267
+      },
+      "automated_findings": [],
+      "human_review_required": true,
+      "review_rubric": [
+        "未提供与没有发生不同",
+        "不替候选人下否定结论"
+      ]
+    },
+    {
+      "variant": "m3-3",
+      "suite_sha256": "f54b3d4f193660b1f48c47db1b846c3e5c47d13d9eaa20f88226e76d3f6e8dd3",
+      "case_id": "E02",
+      "category": "experience",
+      "result": {
+        "created_at": "2026-11-17T05:57:44.940795+00:00",
+        "case_id": "E02",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "25852414481da082455215c567b195419010b66b74587d6420ec4be564cb90ca",
+        "case_sha256": "eba3c8b383dc0b027f6b168cc7e08468d05dd8c52ed4b37e2aea256641de0caa",
+        "deadline_s": 45,
+        "first_content_ms": 1250,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "【开口】材料只说明未提供线上流量与上线记录，不能据此推断“从未上线”；就现有材料，我只能确认自己做的是 Python/PostgreSQL 练习订单查询接口的接口开发，没有生产压测和量化指标。\n【要点】事实边界 ::: “未提供”是材料缺口，不等于“没有发生”；上线与否需要部署记录、访问日志或发布单来证明。\n【方向】可验证方式 ::: 若有发布记录，可说明部署环境、入口和监控；若确实没上线，则明确这是练习项目，并讲清本地验证覆盖了哪些查询与异常场景。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [],
+        "context": {
+          "original_chars": 2037,
+          "sent_chars": 2037,
+          "max_chars": 16000,
+          "partial_fields": [],
+          "messages_sha256": "1aa0c54ffceed7bf5edafbdd2cc6cba7d1d6341a15728bd3f3e403f8bfc4e015"
+        },
+        "duration_ms": 2390,
+        "chars": 227
+      },
+      "automated_findings": [],
+      "human_review_required": true,
+      "review_rubric": [
+        "未提供与没有发生不同",
+        "不替候选人下否定结论"
+      ]
+    },
+    {
+      "variant": "m3-3",
+      "suite_sha256": "f54b3d4f193660b1f48c47db1b846c3e5c47d13d9eaa20f88226e76d3f6e8dd3",
+      "case_id": "T04",
+      "category": "principle",
+      "result": {
+        "created_at": "2026-11-17T05:59:58.674066+00:00",
+        "case_id": "T04",
+        "model": "qwen3.8-max",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "9353d21bb2e59247e34de0487d5b4442a9b6eda2c0ab0c1bc3f2f78581502dea",
+        "case_sha256": "c5b5919b25f31f4ca76319ff934edcb5baf2fc1cc2b827cfbbf119be540b4725",
+        "deadline_s": 45,
+        "first_content_ms": 1032,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "qwen3.8-max"
+          }
+        ],
+        "content": "**深挖**｜不一定。版本号加 CAS 能防旧值回填的前提是：缓存中始终保留可比较的最新版本或墓碑，且检查与写入原子完成；若先删除 key 再对空缓存执行 CAS，仍可能接受旧版本〔synthetic:cache-correctness.md·L7-8〕。\n\n因果链与反例时序：\n1. 写请求提交数据库（版本 v2），随后删除缓存 key。\n2. 读请求 A 发现 miss，查库取到旧快照或因复制延迟读到 v1，准备回填。\n3. 此时缓存为空，A 对空 key 执行 CAS。由于没有现存版本可供比较，CAS 语义退化为“不存在则写入”，v1 被成功写入。\n4. 后续读请求命中缓存，持续返回旧值 v1，直到 TTL 过期。\n\n成立条件与代价：要让 CAS 真正生效，不能直接删除 key，而应写入带版本号的墓碑或保留最新版本，使后续回填的 CAS 能拒绝小于当前版本的值。这要求所有读写和回填操作共享同一版本校验逻辑，并明确锁、超时与租约的失效条件〔synthetic:cache-correctness.md·L7-8〕。代价是增加一次额外写入（墓碑）及版本管理复杂度。若业务要求强一致读，应绕过缓存直接访问具备所需隔离级别的权威存储〔synthetic:cache-correctness.md·L5-6〕。\n\n**追问预备**｜如果改用“先更新数据库再删除缓存”策略，能否避免上述问题？应对：仍不能——读请求可能在删除后、新值可见前取到旧快照并回填旧值，需给出具体时序而非声称无竞态〔synthetic:cache-correctness.md·L1-2〕。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [
+          {
+            "id": "61a925ea2219502e",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              7,
+              8
+            ]
+          },
+          {
+            "id": "85b9a3aab0bc5099",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              1,
+              2
+            ]
+          },
+          {
+            "id": "cc9aa83c72502bc9",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              5,
+              6
+            ]
+          },
+          {
+            "id": "30471352551a79fc",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              3,
+              4
+            ]
+          }
+        ],
+        "context": {
+          "original_chars": 3071,
+          "sent_chars": 3071,
+          "max_chars": 24000,
+          "partial_fields": [],
+          "messages_sha256": "76764ce21a77ae32b935d0a8d1ad89e526c32e39dcb43f9c98656eb822694c43"
+        },
+        "duration_ms": 10500,
+        "chars": 684
+      },
+      "automated_findings": [
+        "target_length_exceeded"
+      ],
+      "human_review_required": true,
+      "review_rubric": [
+        "删除后版本或墓碑如何保留",
+        "检查与写入必须原子；不能无条件保证"
+      ]
+    },
+    {
+      "variant": "m3-3",
+      "suite_sha256": "f54b3d4f193660b1f48c47db1b846c3e5c47d13d9eaa20f88226e76d3f6e8dd3",
+      "case_id": "A01",
+      "category": "ambiguous",
+      "result": {
+        "created_at": "2026-11-17T06:00:09.692526+00:00",
+        "case_id": "A01",
+        "model": "qwen3.8-max",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "25852414481da082455215c567b195419010b66b74587d6420ec4be564cb90ca",
+        "case_sha256": "273301f438510c2754a01630b1a86f4899b6c6d816251a25f5e88c1eb9834b49",
+        "deadline_s": 45,
+        "first_content_ms": 1125,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "qwen3.8-max"
+          }
+        ],
+        "content": "【开口】“这样做”在当前上下文中没有明确指代，无法判断你问的是哪个具体方案或操作。\n\n请补充说明：你指的是订单查询接口中的某项设计（如索引选择、分页方式、事务隔离级别），还是某个故障处理策略？给出具体对象后我再解释其机制与取舍。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [],
+        "context": {
+          "original_chars": 2023,
+          "sent_chars": 2023,
+          "max_chars": 16000,
+          "partial_fields": [],
+          "messages_sha256": "d7808e4ed0ea2b1bbdc18af64a872d158a9f349c6e4ef792027ecb75509d74cc"
+        },
+        "duration_ms": 3078,
+        "chars": 114
+      },
+      "automated_findings": [
+        "unexpected_quick_line"
+      ],
+      "human_review_required": true,
+      "review_rubric": [
+        "没有前文时不能凭空确定指代",
+        "提出一项必要澄清而非泛泛长答"
+      ]
+    },
+    {
+      "variant": "m3-3-reasoning",
+      "suite_sha256": "f54b3d4f193660b1f48c47db1b846c3e5c47d13d9eaa20f88226e76d3f6e8dd3",
+      "case_id": "T04",
+      "category": "principle",
+      "result": {
+        "created_at": "2026-11-17T06:05:15.690581+00:00",
+        "case_id": "T04",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 6000,
+        "prompt_sha256": "9353d21bb2e59247e34de0487d5b4442a9b6eda2c0ab0c1bc3f2f78581502dea",
+        "case_sha256": "c5b5919b25f31f4ca76319ff934edcb5baf2fc1cc2b827cfbbf119be540b4725",
+        "deadline_s": 45,
+        "first_content_ms": 10562,
+        "provider_options": {
+          "thinking": {
+            "type": "enabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "**深挖**｜不一定。版本号加 CAS 只能拒绝“能比较出旧”的写入；一旦缓存里没有可比较的基准，旧版本就可能被接受。\n\n主要因果链：版本校验依赖“保留最新版本或墓碑，并且原子地完成检查与写入”〔synthetic:cache-correctness.md·L7-8〕。如果实现是“先删除 key，再对空缓存做 CAS”，空缓存就没有当前版本，比较条件失效，任何回填都可能写入。反例时序：读请求 R 在写请求 W 提交前读到数据库 v1，随后被挂起；W 提交 v2 并删除缓存；R 恢复后把 v1 写回。若没有保留 v2 的版本基准，这次 CAS 就会成功，旧值持续到下一次写入或过期。\n\n成立条件与代价：要保证不写入旧值，需要（1）版本单调且来自同一权威；（2）保留最新版本或墓碑，不能只删除 key；（3）比较与写入原子完成，否则两个回填并发时仍可能互相覆盖。代价是多一次版本存储或权威存储读取。若读副本有复制延迟，读到旧快照旧版本同样可能通过校验，因此强一致读应绕过缓存，读具有所需隔离语义的权威存储〔同文件·L5-6〕。TTL 也不构成从数据库提交起算的收敛上界，除非读时延、复制延迟与再次回填都有界〔同文件·L3-4〕。\n\n**追问预备**｜“冷启动或 key 过期后版本基准从哪来？”应对：从持久版本存储或权威库读取版本并原子比较写入；代价是每次回填多一次读，或对强一致读直接绕过缓存。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [
+          {
+            "id": "61a925ea2219502e",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              7,
+              8
+            ]
+          },
+          {
+            "id": "85b9a3aab0bc5099",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              1,
+              2
+            ]
+          },
+          {
+            "id": "cc9aa83c72502bc9",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              5,
+              6
+            ]
+          },
+          {
+            "id": "30471352551a79fc",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              3,
+              4
+            ]
+          }
+        ],
+        "context": {
+          "original_chars": 3071,
+          "sent_chars": 3071,
+          "max_chars": 24000,
+          "partial_fields": [],
+          "messages_sha256": "76764ce21a77ae32b935d0a8d1ad89e526c32e39dcb43f9c98656eb822694c43"
+        },
+        "duration_ms": 13531,
+        "chars": 599
+      },
+      "automated_findings": [
+        "citation_outside_retrieved_evidence"
+      ],
+      "human_review_required": true,
+      "review_rubric": [
+        "删除后版本或墓碑如何保留",
+        "检查与写入必须原子；不能无条件保证"
+      ]
+    },
+    {
+      "variant": "m3-3-focused-retrieval",
+      "suite_sha256": "f54b3d4f193660b1f48c47db1b846c3e5c47d13d9eaa20f88226e76d3f6e8dd3",
+      "case_id": "T03",
+      "category": "principle",
+      "result": {
+        "created_at": "2026-11-17T06:19:32.323619+00:00",
+        "case_id": "T03",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "9353d21bb2e59247e34de0487d5b4442a9b6eda2c0ab0c1bc3f2f78581502dea",
+        "case_sha256": "e48085cf37902d8e83194f09d7d1d57baba5dfb7b2bc945cb53f204c8d6c597c",
+        "deadline_s": 45,
+        "first_content_ms": 765,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "**深挖**｜不是。single-flight 只合并同一 key 的并发读加载，减少缓存击穿；它不协调数据库写入与回填，因此不能保证读写强一致〔reference·cache-correctness.md L5-L6〕。\n\n主要因果链：读线程 A 未命中，开始从数据库加载旧值；写线程 W 更新数据库并删除缓存；A 随后把旧值回填缓存。此后所有读命中旧值，直到 TTL 或下一次写入。single-flight 只让其他并发读等待 A 的加载结果，反而使它们一起拿到旧值；它约束的是“同 key 并发读只加载一次”，不约束“写与回填的先后”。\n\n成立条件与代价：若业务只要求最终一致，可配合延迟双删、版本号或短 TTL 缓解，但这些是缓解，不是强一致保证。要求强一致的读，应绕过缓存，直接读具有所需隔离语义的权威存储，代价是失去缓存收益并承担数据库压力。\n\n**追问预备**｜问“回填时加版本号能否解决？”应对：能缩小旧值覆盖窗口，但需写路径维护版本且读路径校验，仍要明确版本比较与写入的原子性，否则只是把竞态挪到版本检查处。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [
+          {
+            "id": "cc9aa83c72502bc9",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              5,
+              6
+            ]
+          }
+        ],
+        "context": {
+          "original_chars": 2327,
+          "sent_chars": 2327,
+          "max_chars": 24000,
+          "partial_fields": [],
+          "messages_sha256": "1fee66a2c5a06d74c9d2c27e8d20545bdeb050357c5fecb8f3ebc26f923bf0b3"
+        },
+        "duration_ms": 3015,
+        "chars": 464,
+        "execution_path": "provider",
+        "provider_attempts": 1
+      },
+      "automated_findings": [],
+      "human_review_required": true,
+      "review_rubric": [
+        "合并读请求和协调写入是不同作用域",
+        "提供读写回填竞态反例"
+      ]
+    },
+    {
+      "variant": "m3-3-focused-retrieval",
+      "suite_sha256": "f54b3d4f193660b1f48c47db1b846c3e5c47d13d9eaa20f88226e76d3f6e8dd3",
+      "case_id": "T04",
+      "category": "principle",
+      "result": {
+        "created_at": "2026-11-17T06:20:34.690099+00:00",
+        "case_id": "T04",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "9353d21bb2e59247e34de0487d5b4442a9b6eda2c0ab0c1bc3f2f78581502dea",
+        "case_sha256": "c5b5919b25f31f4ca76319ff934edcb5baf2fc1cc2b827cfbbf119be540b4725",
+        "deadline_s": 45,
+        "first_content_ms": 1250,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash"
+          }
+        ],
+        "content": "**深挖**｜不一定。版本号加 CAS 只能约束“回填时缓存里仍保留可比较的最新版本或墓碑”这一种情况；如果删除后缓存为空，回填方对空 key 做 CAS，仍可能把旧版本写进去〔synthetic:cache-correctness.md·L7-L8〕。\n\n主要因果链：删除 key 是为了让后续读回源，但删除本身不记录“已见过哪个版本”。此时一个持有旧值的回填请求到达，缓存里没有版本可比，CAS 的“比较”就退化成“key 不存在则写入”，旧值被接受；之后新值回填反而可能因版本比较失败被拒，缓存停在旧值。\n\n一种可行做法是保留墓碑或最新版本号，并把“比较版本 + 写入”做成原子操作；同时用锁覆盖读、删、回填，明确锁超时、租约和失效条件〔synthetic:cache-correctness.md·L8〕。代价是墓碑需要过期清理策略，锁会引入等待和超时处理；且锁超时后仍可能并发，所以这是缩小窗口而非绝对保证。\n\n**追问预备**｜“墓碑什么时候能安全删？”——需确认所有可能持有旧版本的写入方都已过期或失效，否则删墓碑等于重新打开空缓存 CAS 的窗口。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [
+          {
+            "id": "61a925ea2219502e",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              7,
+              8
+            ]
+          }
+        ],
+        "context": {
+          "original_chars": 2294,
+          "sent_chars": 2294,
+          "max_chars": 24000,
+          "partial_fields": [],
+          "messages_sha256": "f87b7acbed14bc071320a87c7cdc710ee9239228c9c76f8670acef12ab0910a1"
+        },
+        "duration_ms": 3594,
+        "chars": 482,
+        "execution_path": "provider",
+        "provider_attempts": 1
+      },
+      "automated_findings": [],
+      "human_review_required": true,
+      "review_rubric": [
+        "删除后版本或墓碑如何保留",
+        "检查与写入必须原子；不能无条件保证"
+      ]
+    },
+    {
+      "variant": "m3-3-local-clarification",
+      "suite_sha256": "f54b3d4f193660b1f48c47db1b846c3e5c47d13d9eaa20f88226e76d3f6e8dd3",
+      "case_id": "A01",
+      "category": "ambiguous",
+      "result": {
+        "created_at": "2026-11-17T06:20:38.832468+00:00",
+        "case_id": "A01",
+        "model": "deepseek-v4.1-flash",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "25852414481da082455215c567b195419010b66b74587d6420ec4be564cb90ca",
+        "case_sha256": "273301f438510c2754a01630b1a86f4899b6c6d816251a25f5e88c1eb9834b49",
+        "deadline_s": 45,
+        "first_content_ms": 0,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "local:clarification"
+          }
+        ],
+        "content": "【开口】你指的是哪种具体做法或方案？",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [],
+        "context": {
+          "original_chars": 2023,
+          "sent_chars": 2023,
+          "max_chars": 16000,
+          "partial_fields": [],
+          "messages_sha256": "d7808e4ed0ea2b1bbdc18af64a872d158a9f349c6e4ef792027ecb75509d74cc"
+        },
+        "duration_ms": 0,
+        "chars": 18,
+        "execution_path": "local_clarification",
+        "provider_attempts": 0
+      },
+      "automated_findings": [],
+      "human_review_required": true,
+      "review_rubric": [
+        "没有前文时不能凭空确定指代",
+        "提出一项必要澄清而非泛泛长答"
+      ]
+    },
+    {
+      "variant": "m3-3-model-comparison",
+      "suite_sha256": "f54b3d4f193660b1f48c47db1b846c3e5c47d13d9eaa20f88226e76d3f6e8dd3",
+      "case_id": "T04",
+      "category": "principle",
+      "result": {
+        "created_at": "2026-11-17T06:25:08.249861+00:00",
+        "case_id": "T04",
+        "model": "deepseek-v4.1-flash-1017",
+        "temperature": 0.4,
+        "max_tokens": 2400,
+        "prompt_sha256": "1e7ca1d7f2fe4d88b4392827d5ae8aeb3910a01ce07ede27b82c2c261e1e7608",
+        "case_sha256": "c5b5919b25f31f4ca76319ff934edcb5baf2fc1cc2b827cfbbf119be540b4725",
+        "deadline_s": 45,
+        "first_content_ms": 1421,
+        "provider_options": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "model": "deepseek-v4.1-flash-1017"
+          }
+        ],
+        "content": "**深挖**｜不一定。版本号加 CAS 只能防止“旧版本覆盖新版本”，前提是缓存里还保留着可比较的最新版本或墓碑，并且检查与写入是原子的；如果删除 key 后对空缓存执行 CAS，旧值仍可能被接受〔synthetic:cache-correctness.md·L7-8〕。\n\n主要因果链：读请求先查库得到 v1，此时写请求更新为 v2 并删除缓存；读请求回填时缓存为空，CAS 没有可比较的版本，于是把 v1 写入，旧值就回填了。因此“删除 + 版本 CAS”并不构成完整保护，删除本身会抹掉比较依据。\n\n成立条件与代价：要真正挡住旧值，需要保留版本或墓碑，并让检查与写入原子完成；锁则要覆盖相关读写和回填，并明确超时、租约与失效条件〔synthetic:cache-correctness.md·L7-8〕。代价是墓碑占用空间、需要清理策略，锁还会引入延迟和租约失效后的竞态，不能宣称绝对不回填。\n\n**追问预备**｜“墓碑什么时候可以安全清理？”——应对：只有在确认不存在更早版本的在途读或回填之后才能删，否则清理窗口本身会重新打开旧值回填的口子。",
+        "status": "complete",
+        "error": "",
+        "retrieved_evidence": [
+          {
+            "id": "61a925ea2219502e",
+            "source": "synthetic:cache-correctness.md",
+            "kind": "reference",
+            "lines": [
+              7,
+              8
+            ]
+          }
+        ],
+        "context": {
+          "original_chars": 2424,
+          "sent_chars": 2424,
+          "max_chars": 24000,
+          "partial_fields": [],
+          "messages_sha256": "0f48a4858ca5794509daa81c9f5b0fe9b8ef6590b6ff1ed36099494efcb908c9"
+        },
+        "duration_ms": 4187,
+        "chars": 476,
+        "execution_path": "provider",
+        "provider_attempts": 1
+      },
+      "automated_findings": [],
+      "human_review_required": true,
+      "review_rubric": [
+        "删除后版本或墓碑如何保留",
+        "检查与写入必须原子；不能无条件保证"
+      ]
+    }
+  ]
+}

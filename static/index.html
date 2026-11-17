@@ -2,10 +2,11 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>面试辅助 · Teleprompter</title>
 <style>
   :root{
-    --bg:#0f1115; --panel:#161a22; --panel2:#1c212c; --line:#2a3040;
+    --bg:#111112; --panel:#19191b; --panel2:#232325; --line:#36363a;
     --fg:#e8eaf0; --dim:#9aa3b5; --accent:#ffb02e; --green:#34d17b; --red:#ff5c5c;
     --blue:#6aa1ff;
   }
@@ -17,10 +18,12 @@
     display:flex;flex-direction:column;overflow:hidden;
   }
   header{
-    display:flex;align-items:center;gap:12px;padding:10px 16px;
+    display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:10px 16px;
     background:var(--panel);border-bottom:1px solid var(--line);flex:0 0 auto;
   }
-  header .title{font-weight:700;font-size:18px}
+  header .title{font-weight:700;font-size:18px;white-space:nowrap;flex-shrink:0}
+  header button,header select{flex-shrink:0;white-space:nowrap;max-width:100%}
+  header select{max-width:240px}
   .pill{font-size:12px;color:var(--dim)}
   select,button{
     background:var(--panel2);color:var(--fg);border:1px solid var(--line);
@@ -39,7 +42,7 @@
   #micDot{color:var(--dim);transition:.15s}
   #micDot.on{color:#3498db}
   #micDot.spk{color:var(--green);animation:pulse .5s infinite alternate}
-  #stateDot{width:10px;height:10px;border-radius:50%;background:#555;display:inline-block}
+  #stateDot{width:10px;height:10px;flex-shrink:0;border-radius:50%;background:#555;display:inline-block}
   #stateDot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
   #stateDot.speaking{animation:pulse .6s infinite alternate}
   @keyframes pulse{from{transform:scale(1)}to{transform:scale(1.5)}}
@@ -47,16 +50,16 @@
   #feed{flex:1 1 auto;overflow-y:auto;padding:16px 22px;scroll-behavior:smooth}
   .qa{margin-bottom:18px;max-width:1100px}
   .qbox{
-    background:linear-gradient(90deg,rgba(255,176,46,.16),transparent);
-    border-left:4px solid var(--accent);padding:10px 14px;border-radius:0 10px 10px 0;
+    background:#22201b;
+    border-left:3px solid var(--accent);padding:10px 14px;border-radius:0;
     font-size:20px;line-height:1.5;font-weight:600;color:#ffe1a8;
   }
   .qbox .t{font-size:12px;color:var(--dim);font-weight:400;margin-right:8px}
 
   /* 快速卡 */
   .quickcard{
-    margin-top:8px;background:var(--panel);border:1px solid var(--line);
-    border-radius:10px;padding:14px 18px;font-size:19px;line-height:1.7;
+    margin-top:8px;background:transparent;border:0;
+    border-radius:0;padding:10px 14px;font-size:18px;line-height:1.7;
   }
   .quickcard .opener{font-size:21px;color:#fff;font-weight:600;line-height:1.55}
   .quickcard .opener .tag,
@@ -67,12 +70,18 @@
   .quickcard .pt .tag{background:var(--blue)}
   .quickcard .pt{margin-top:6px;color:#dbe2f0}
   .quickcard.pending{color:var(--dim);font-style:italic}
+  .qbox,.quickcard,.subcard{overflow-wrap:anywhere}
+  .answer-actions{display:flex;align-items:center;gap:8px;min-height:28px;margin-top:8px;white-space:normal}
+  .answer-state{flex:1;min-width:0;color:var(--dim);font-size:12px;font-style:normal;line-height:1.4}
+  .answer-state.error{color:var(--red)}
+  .cancel-generation{width:28px;height:28px;padding:0;flex:0 0 28px;border-radius:4px;font-size:14px}
+  .cancel-generation[hidden]{display:none}
 
   /* 展开方向 */
   .dirrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
   .dirrow .lbl{align-self:center;font-size:12px;color:var(--dim)}
   .chip{
-    background:var(--panel2);border:1px solid var(--line);border-radius:16px;
+    background:var(--panel2);border:1px solid var(--line);border-radius:6px;
     padding:6px 14px;font-size:14px;cursor:pointer;color:var(--fg);transition:.15s;
   }
   .chip:hover{border-color:var(--accent);background:#262d3b}
@@ -88,6 +97,35 @@
   .subcard b{color:var(--accent)}
   .subcard.pending{color:var(--dim);font-style:italic}
 
+  .answer-block{margin:0 0 14px;min-width:0}
+  .answer-block:last-child{margin-bottom:0}
+  .answer-block-label{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;font-size:13px;line-height:1.5;margin-bottom:4px}
+  .answer-kind{color:var(--dim);font-size:12px;font-weight:600}
+  .answer-block[data-kind="unknown"] .answer-kind,.answer-review{color:var(--accent)}
+  .answer-block[data-kind="hypothesis"] .answer-kind{color:var(--blue)}
+  .answer-block[data-kind="plan"] .answer-kind{color:var(--green)}
+  .answer-block[data-kind="material"]{border-left:2px solid var(--line);padding-left:12px}
+  .answer-block[data-support="unverified"]{border-color:var(--accent)}
+  .block-content{white-space:pre-wrap;overflow-wrap:anywhere;font-style:normal}
+  .block-content.formatted{white-space:normal}
+  .block-content p{margin:0 0 8px;white-space:normal}
+  .block-content p:last-child{margin-bottom:0}
+  .block-content pre{max-width:100%;overflow:auto;white-space:pre;padding:10px;background:#101011;font-size:14px;line-height:1.6}
+  .block-content code{font-family:Consolas,monospace;font-size:.9em}
+  .block-content a{color:var(--blue)}
+  .block-content ul,.block-content ol{margin:6px 0;padding-left:24px;white-space:normal}
+  .quote-match{font-size:11px;color:var(--dim)}
+  .material-source{padding:2px 0;border:0;background:none;color:var(--blue);font-size:12px;margin-top:4px}
+  .citation-ref{display:inline;padding:0 3px;min-width:24px;border:0;background:none;color:var(--blue);font-size:12px;line-height:1.7;vertical-align:super;border-radius:2px}
+  .citation-unresolved{text-decoration:underline dotted var(--accent);font-size:13px}
+  .answer-review{font-size:12px;margin:8px 0}
+  .answer-sources{border-top:1px solid var(--line);margin-top:14px;padding-top:8px;font-size:13px;line-height:1.6;white-space:normal}
+  .answer-sources summary{cursor:pointer;overflow-wrap:anywhere;color:var(--dim)}
+  .source-item{padding:8px 0;border-bottom:1px solid var(--line)}
+  .source-heading,.source-partial{font-size:12px;color:var(--dim);margin:5px 0}
+  .source-excerpt{max-height:260px;overflow:auto;font:13px/1.7 Consolas,"Microsoft YaHei UI",monospace;white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0;color:var(--fg)}
+  button:focus-visible,summary:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+
   .sysmsg{color:var(--dim);font-size:13px;margin:6px 0}
   .sysmsg.err{color:var(--red)}
 
@@ -96,7 +134,7 @@
     background:var(--panel);border-top:1px solid var(--line);
   }
   #manualInput{
-    flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+    flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line);color:var(--fg);
     border-radius:8px;padding:10px 14px;font-size:15px;outline:none;
   }
   #manualInput:focus{border-color:var(--accent)}
@@ -157,20 +195,27 @@
   .kbupload .btn:hover{border-color:var(--accent)}
   #kbClose{float:right;background:none;border:none;color:var(--dim);font-size:18px;cursor:pointer}
 </style>
+<link rel="stylesheet" href="/static/workspace.css">
+<script src="/static/vendor/lucide.js" defer></script>
+<script src="/static/js/desktop-pairing.js" type="module"></script>
 </head>
 <body>
 <header>
   <span id="stateDot"></span>
-  <span class="title">🎙 面试辅助</span>
+  <span class="title"><i data-lucide="audio-lines"></i>面试辅助</span>
   <span id="resumeBadge" class="pill" style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">简历检测中…</span>
-  <button id="btnResume" title="重新上传/更换简历(PDF/MD/TXT)，即时生效">📄 换简历</button>
+  <button id="btnResume" class="tool" title="管理简历" aria-label="管理简历"><i data-lucide="file-user"></i></button>
   <select id="deviceSel" title="面试官声音(系统回环)设备"><option value="">扬声器(默认)</option></select>
-  <select id="micSel" title="你自己的麦克风(转写你的回答供AI参考，可选)"><option value="">🎤 不录我</option></select>
-  <button id="btnStart" class="primary">▶ 监听</button>
-  <button id="btnStop" disabled>⏸ 停止</button>
-  <button id="btnRecal" title="在安静时点击，重新校准噪声底">🎚 校准</button>
-  <button id="btnClear" title="清空对话与AI上下文 (F9)">🗑 清空 (F9)</button>
-  <button id="btnKB" title="知识库：简历/论文/辅助材料管理">🧠 知识库</button>
+  <select id="micSel" aria-label="本人麦克风" title="本人麦克风"><option value="default">本人 · 系统默认麦克风</option><option value="">关闭本人麦克风</option></select>
+  <button id="btnStart" class="primary"><i data-lucide="play"></i>监听</button>
+  <button id="btnStop" class="tool" disabled title="停止采集" aria-label="停止采集"><i data-lucide="pause"></i></button>
+  <button id="btnRecal" class="tool" title="重新校准" aria-label="重新校准"><i data-lucide="sliders-horizontal"></i></button>
+  <button id="btnClear" class="tool" title="新会话" aria-label="新会话"><i data-lucide="list-plus"></i></button>
+  <button id="btnKB" class="tool" title="资料库" aria-label="资料库"><i data-lucide="library"></i></button>
+  <button id="btnPhone" class="tool" title="手机显示" aria-label="手机显示"><i data-lucide="smartphone"></i></button>
+  <a href="/history" class="tool" title="历史复盘" aria-label="历史复盘"><i data-lucide="history"></i></a>
+  <a href="/settings" class="tool" title="模型设置" aria-label="模型设置"><i data-lucide="settings-2"></i></a>
+  <span id="previewBadge" class="pill" hidden>离线演示</span>
   <div id="levelWrap">
     <span class="pill" id="micDot" title="麦克风状态">🎤</span>
     <div id="micBarOuter"><div id="micBar"></div></div>
@@ -182,18 +227,41 @@
   </div>
 </header>
 
+<div class="workspace">
+<aside class="question-nav" aria-label="当前会话题目">
+  <div class="nav-heading"><span>当前会话</span><span id="questionCount">0 题</span></div>
+  <nav id="questionList"></nav>
+</aside>
+<main class="reader">
 <div id="feed">
-  <div class="sysmsg">就绪。监听开启后：面试官提问 → <b>1.1秒静音判定成题</b>（慢语速/停顿不再被拆成两题）→ 快速卡（开口句+要点）→ 展开方向按钮补细节。<br>
-  建议在下拉框选你的 <b>🎤 麦克风</b>：你的回答也会被转写，AI 出卡会贴合你已说的内容（只存本机，不触发AI抢答）。<br>
-  兜底：问题手动敲下方输入框。**F8**=重答上一题，**F9**=清空。</div>
+  <div class="sysmsg">等待新问题</div>
   <div id="selfBar" class="sysmsg" style="display:none;color:#7ee2a8"></div>
+</div>
+<button id="followLatest" hidden><i data-lucide="arrow-down"></i>回到最新</button>
+</main>
 </div>
 
 <footer>
-  <input id="manualInput" placeholder="手动输入问题（自动监听失效时的兜底）… 回车发送">
-  <button id="btnAsk">问</button>
-  <div class="hint">面板仅本机显示<br>会议软件看不到此窗口</div>
+  <input id="manualInput" placeholder="输入问题…" aria-label="输入问题">
+  <button id="btnAsk" title="发送问题" aria-label="发送问题"><i data-lucide="arrow-up"></i></button>
+  <span class="pill" id="connectionState">连接中</span>
 </footer>
+
+<dialog id="phoneDialog" aria-labelledby="phoneTitle">
+  <button id="phoneClose" class="dialog-close" title="关闭" aria-label="关闭手机配对"><i data-lucide="x"></i></button>
+  <h2 id="phoneTitle">手机显示</h2>
+  <div id="phoneState" role="status">正在检查</div>
+  <select id="phoneAddress" aria-label="局域网地址"></select>
+  <img id="phoneQr" alt="手机配对二维码" hidden>
+  <output id="phoneCode"></output>
+  <div id="phoneExpiry"></div>
+  <div id="phoneError" role="alert"></div>
+  <div class="phone-actions">
+    <button id="phoneNewCode"><i data-lucide="refresh-cw"></i>生成配对码</button>
+    <button id="phoneRevoke"><i data-lucide="unlink"></i>撤销全部访问</button>
+  </div>
+  <p id="phoneHint"></p>
+</dialog>
 
 <!-- 知识库管理面板 -->
 <div id="kbOverlay">
@@ -207,8 +275,38 @@
 </div>
 
 <script>
+const answerContentReady=window.AnswerContent?Promise.resolve(window.AnswerContent)
+  :import('/static/js/answer-content.js').then(module=>window.AnswerContent=module).catch(()=>null);
 const $=id=>document.getElementById(id);
 let es=null,lastQuestion="",curQA=null;
+let currentSession=null,latestGeneration=0;
+let streamEpoch=null,lastSequence=-1,restoring=false;
+let followReading=true;
+const qaByTurn=new Map(),taskTargets=new Map();
+
+function resetSession(sessionId,announce=true){
+  currentSession=sessionId;latestGeneration=0;lastQuestion='';curQA=null;
+  qaByTurn.clear();taskTargets.clear();
+  $('questionList').replaceChildren();$('questionCount').textContent='0 题';
+  if(announce){followReading=true;$('followLatest').hidden=true;}
+  window._pendingBub=null;window._voiceQ=false;
+  const selfBar=$('selfBar');
+  $('feed').replaceChildren();
+  if(selfBar){selfBar.style.display='none';selfBar.textContent='';$('feed').appendChild(selfBar);}
+  if(announce)addSys('已清空，开始新一轮');
+}
+
+function scrollToContent(element){
+  if(!restoring&&followReading){$('feed').scrollTop=$('feed').scrollHeight;}
+}
+$('feed').addEventListener('scroll',()=>{
+  if(restoring)return;
+  const feed=$('feed');followReading=feed.scrollHeight-feed.clientHeight-feed.scrollTop<80;
+  $('followLatest').hidden=followReading;
+});
+$('followLatest').onclick=()=>{
+  followReading=true;$('followLatest').hidden=true;$('feed').scrollTop=$('feed').scrollHeight;
+};
 
 function fmtLevel(db,floor,enter){
   const lo=(floor??-70),hi=(enter??lo)+25;
@@ -227,24 +325,29 @@ function fmtMicLevel(db,speaking,active){
   $('micDot').className='pill'+(active?' on':'')+(speaking?' spk':'');
 }
 
+let captureBusy=false,captureActive=false;
+function updateDevices(select,devices,defaults){
+  const signature=JSON.stringify(devices||[]);
+  if(select.dataset.devices===signature)return;
+  const selected=select.value;
+  select.replaceChildren(...defaults.map(([value,label])=>new Option(label,value)),
+    ...(devices||[]).map(d=>new Option(d.name+(d.hostapi?' · '+d.hostapi:''),String(d.index))));
+  if(selected&&!Array.from(select.options).some(o=>o.value===selected)){
+    select.add(new Option('所选设备已断开',selected));
+  }
+  select.value=selected;select.dataset.devices=signature;
+}
 async function refreshState(){
   try{
-    const r=await fetch('/api/state');const s=await r.json();
+    const r=await fetch('/api/state');if(!r.ok)throw new Error('状态获取失败');const s=await r.json();
+    captureActive=!!(s.listening||s.self_listening);
+    $('btnStart').disabled=captureBusy||!!s.listening;$('btnStop').disabled=captureBusy||!captureActive;
+    $('previewBadge').hidden=!s.preview;
     const sel=$('deviceSel');
-    if(sel.options.length<=1&&s.devices&&s.devices.length){
-      s.devices.forEach(d=>{
-        const o=document.createElement('option');o.value=d.index;o.textContent='🔊 '+d.name;sel.appendChild(o);
-      });
-    }
+    updateDevices(sel,s.devices,[['','扬声器(默认)']]);
     const msel=$('micSel');
-    if(msel.options.length<=1&&s.input_devices&&s.input_devices.length){
-      s.input_devices.forEach(d=>{
-        const o=document.createElement('option');o.value=d.index;
-        o.textContent='🎤 '+d.name.slice(0,26)+(d.hostapi&&d.hostapi.includes('WASAPI')?'':' ·'+d.hostapi);
-        msel.appendChild(o);
-      });
-      if(s.self_listening){msel.value=s.self_engine?.device_index??'';}
-    }
+    updateDevices(msel,s.input_devices,[['default','本人 · 系统默认麦克风'],['','关闭本人麦克风']]);
+    if(s.self_listening&&!captureBusy)msel.value=String(s.self_engine?.selection??'default');
     // 麦克风电平条 + 状态
     if(s.self_engine){
       fmtMicLevel(s.self_engine.last_level_db ?? -100,
@@ -284,53 +387,40 @@ async function refreshState(){
 function addSys(msg,isErr){
   const d=document.createElement('div');
   d.className='sysmsg'+(isErr?' err':'');d.textContent=msg;
-  $('feed').appendChild(d);d.scrollIntoView({block:'end'});
+  $('feed').appendChild(d);scrollToContent(d);
 }
 
 const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const md=s=>esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');
 
-/* 解析快速卡的行式协议：【开口】【要点】【方向】名 ::: 说明 */
-function parseQuick(raw){
-  const out={opener:'',points:[],dirs:[]};
-  raw.split('\n').forEach(line=>{
-    const t=line.trim();
-    if(t.startsWith('【开口】'))out.opener=t.slice(4).trim();
-    else if(t.startsWith('【要点】'))out.points.push(t.slice(4).trim());
-    else if(t.startsWith('【方向】')){
-      const body=t.slice(4).trim();const seg=body.split(':::');
-      out.dirs.push({name:(seg[0]||'').trim(),desc:(seg[1]||'').trim()});
-    }
-  });
-  return out;
-}
-
-function renderQuick(box,raw,done){
-  const p=parseQuick(raw);
-  let h='';
-  if(p.opener)h+=`<div class="opener"><span class="tag">开口照说</span>${esc(p.opener)}</div>`;
-  for(const pt of p.points)h+=`<div class="pt"><span class="tag">要点</span>${esc(pt)}</div>`;
-  if(!p.opener&&!p.points.length)h=esc(raw);   // 流式前几个token还没成行，原样显示
+function renderQuick(box,raw,done,qaEl=box.parentElement,answerDoc=null,sources=[],allowFull=true){
+  const api=window.AnswerContent;
+  if(!api){box.textContent=raw;return;}
+  const value=api.isAnswerDocument(answerDoc,'quick')?answerDoc:api.draftDocument(raw,'quick',sources);
+  api.renderDocument(box,value);
   box.classList.remove('pending');
-  box.innerHTML=h;
-  if(done)renderDirs(box.parentElement,p.dirs);
+  if(done)renderDirs(qaEl,value.directions.map(item=>({name:item.name,desc:item.description})),allowFull);
 }
 
-function renderDirs(qaEl,dirs){
+function renderDirs(qaEl,dirs,allowFull=true){
   const old=qaEl.querySelector('.dirrow');if(old)old.remove();
-  if(!dirs.length)return;
+  dirs=dirs.filter(item=>item.name);
+  if(!dirs.length&&!allowFull)return;
   const row=document.createElement('div');row.className='dirrow';
   row.innerHTML='<span class="lbl">↳ 深挖：</span>';
   dirs.forEach(d=>{
     const c=document.createElement('button');c.className='chip';
+    c.dataset.direction=d.name;
     c.innerHTML=`${esc(d.name)}<small>${esc(d.desc)}</small>`;
     c.onclick=()=>askDetail(d.name,qaEl,c);
     row.appendChild(c);
   });
-  const full=document.createElement('button');full.className='chip full';
-  full.innerHTML='完整版<small>S·A·R 全结构 + 追问</small>';
-  full.onclick=()=>askDetail('完整版',qaEl,full);
-  row.appendChild(full);
+  if(allowFull){
+    const full=document.createElement('button');full.className='chip full';
+    full.dataset.direction='完整版';full.textContent='完整版';
+    full.onclick=()=>askDetail('完整版',qaEl,full);
+    row.appendChild(full);
+  }
   qaEl.appendChild(row);
 }
 
@@ -344,36 +434,195 @@ function addBubble(text, who, side, ts){
     ?`<span class="okchip" title="只存本机历史，并作为后续出卡的上下文；不会对你生成 AI 建议">✓ 已记录 · 作上下文</span>`
     :'';
   row.innerHTML=`<div class="bub ${side}"><span class="who">${who} ${ts||''}</span>${esc(text)}${chip}</div>`;
-  $('feed').appendChild(row);row.scrollIntoView({block:'end'});
+  $('feed').appendChild(row);scrollToContent(row);
   return row.querySelector('.bub');
 }
 
-function beginQA(q,ts){
+function beginQA(q,ts,event){
   curQA={};
   const qa=document.createElement('div');qa.className='qa';
+  qa.dataset.turnId=event.turn_id;
   qa.innerHTML=`<div class="qbox"><span class="t">${ts}</span>${md(q)}</div>
     <div class="quickcard pending">思考中…</div>`;
-  $('feed').appendChild(qa);qa.scrollIntoView({block:'end'});
-  Object.assign(curQA,{el:qa,card:qa.querySelector('.quickcard'),raw:'',mode:'quick',subs:{}});
+  $('feed').appendChild(qa);scrollToContent(qa);
+  Object.assign(curQA,{el:qa,card:qa.querySelector('.quickcard'),subs:new Map(),
+    sessionId:event.session_id,turnId:event.turn_id,generation:event.generation,status:'pending'});
+  qaByTurn.set(event.turn_id,curQA);
+  const link=document.createElement('button');link.className='question-link';
+  link.dataset.turnId=event.turn_id;
+  const index=document.createElement('span');index.className='nav-index';index.textContent='问题 '+qaByTurn.size;
+  const label=document.createElement('span');label.className='nav-label';label.textContent=q;
+  link.append(index,label);link.setAttribute('aria-current',String(followReading||qaByTurn.size===1));
+  if(followReading)for(const item of $('questionList').children)item.setAttribute('aria-current','false');
+  link.onclick=()=>{
+    followReading=false;$('followLatest').hidden=false;
+    qa.scrollIntoView({block:'start'});
+    for(const item of $('questionList').children)item.setAttribute('aria-current',String(item===link));
+  };
+  $('questionList').append(link);$('questionCount').textContent=qaByTurn.size+' 题';
   return curQA;
 }
 
-function beginSub(qa,direction,ts){
-  const sub=document.createElement('div');sub.className='subcard pending';
-  sub.innerHTML=`<div class="hd">🔎 深挖 · ${esc(direction)} ${ts||''}</div>生成中…`;
-  qa.appendChild(sub);sub.scrollIntoView({block:'end'});
-  qa.subs[direction]=sub;
-  qa.raw='';qa.card=null;           // 后续 delta 进子卡
-  qa.activeSub=sub;
+function beginSub(qa,direction,ts,taskId){
+  const old=qa.subs.get(direction);
+  const element=old?.el||document.createElement('div');element.className='subcard pending';
+  element.innerHTML=`<div class="hd">🔎 深挖 · ${esc(direction)} ${esc(ts||'')}</div>生成中…`;
+  if(!element.isConnected)qa.el.appendChild(element);
+  const sub={el:element,status:'pending'};
+  qa.subs.set(direction,sub);
+  const target={qa,box:element,raw:'',level:'detail',direction,sub,taskId,attempt:0,model:''};
+  taskTargets.set(taskId,target);
+  renderAnswer(target,'','pending');
+  scrollToContent(element);
   return sub;
+}
+
+function updateDirectionButtons(qa){
+  const busy=[...qa.subs.values()].some(sub=>['pending','streaming'].includes(sub.status));
+  qa.el.querySelectorAll('.chip').forEach(button=>{
+    button.disabled=busy||qa.subs.get(button.dataset.direction)?.status==='complete';
+  });
+}
+
+function renderAnswer(target,content,status,error='',answerDoc=null){
+  target.raw=content;
+  target.status=status;target.error=error;target.document=answerDoc;
+  if(answerDoc?.sources)target.sources=answerDoc.sources;
+  if(!window.AnswerContent&&!target.waitingForRenderer){
+    target.waitingForRenderer=true;
+    answerContentReady.then(api=>{
+      if(api&&target.box.isConnected)renderAnswer(target,target.raw,target.status,target.error,target.document);
+    });
+  }
+  if(!target.body){
+    target.body=document.createElement('div');target.body.className='answer-body';
+    const actions=document.createElement('div');actions.className='answer-actions';
+    target.stateLabel=document.createElement('span');target.stateLabel.className='answer-state';
+    target.cancelButton=document.createElement('button');target.cancelButton.className='cancel-generation';
+    target.cancelButton.type='button';target.cancelButton.textContent='■';
+    target.cancelButton.title='取消生成';target.cancelButton.setAttribute('aria-label','取消生成');
+    target.cancelButton.onclick=()=>cancelGeneration(target);
+    actions.append(target.stateLabel,target.cancelButton);
+    target.box.replaceChildren(target.body,actions);
+  }
+  const body=target.body;
+  target.box.classList.toggle('pending',status==='pending');
+  if(status==='error'&&!content){
+    body.textContent='';
+  }else if(status==='pending'&&!content){
+    body.textContent=target.level==='detail'?'生成中…':'思考中…';
+  }else if(target.level==='detail'){
+    const api=window.AnswerContent;
+    if(api){
+      const value=api.isAnswerDocument(answerDoc,'detail')?answerDoc:api.draftDocument(content,'detail',target.sources||[]);
+      api.renderDocument(body,value);
+      const heading=window.document.createElement('div');heading.className='hd';
+      heading.textContent='深挖 · '+target.direction;body.prepend(heading);
+    }else body.textContent=content;
+  }else{
+    renderQuick(body,content||(status==='cancelled'?'':'未返回内容'),status==='complete',target.qa.el,
+      answerDoc,target.sources||[],target.model!=='local:clarification');
+  }
+  target.stateLabel.classList.toggle('error',status==='error');
+  target.stateLabel.textContent=status==='error'?'生成失败：'+(error||'请重试')
+    :status==='cancelled'?'已取消':(target.attempt>1?'备用模型 · ':'')+(target.model||'');
+  target.cancelButton.hidden=!['pending','streaming'].includes(status);
+  target.cancelButton.disabled=!!target.cancelPending;
+  if(target.sub)target.sub.status=status;else target.qa.status=status;
+  updateDirectionButtons(target.qa);
+  scrollToContent(target.box);
+}
+
+async function cancelGeneration(target){
+  if(target.cancelPending||taskTargets.get(target.taskId)!==target)return;
+  target.cancelPending=true;target.cancelButton.disabled=true;
+  try{
+    const response=await fetch('/api/cancel',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({session_id:target.qa.sessionId,task_id:target.taskId})});
+    const result=await response.json();
+    if(!result.ok)throw new Error(result.error||'请求失败');
+  }catch(error){
+    if(taskTargets.get(target.taskId)===target)addSys('取消失败：'+error.message,true);
+  }finally{
+    target.cancelPending=false;target.cancelButton.disabled=false;
+  }
+}
+
+function eventPosition(id){
+  const match=/^([a-f0-9]{32}):(\d+)$/.exec(id||'');
+  if(!match)return null;
+  const sequence=Number(match[2]);
+  return Number.isSafeInteger(sequence)?{epoch:match[1],sequence}:null;
+}
+
+function restoreSnapshot(event){
+  const position=eventPosition(event.event_id);
+  if(!position||!Array.isArray(event.turns))return;
+  if(position.epoch===streamEpoch&&position.sequence<lastSequence)return;
+  const feed=$('feed'),top=feed.scrollTop;
+  const selectedTurn=$('questionList').querySelector('[aria-current="true"]')?.dataset.turnId;
+  const followLatest=currentSession!==event.session_id||(followReading&&feed.scrollHeight-feed.clientHeight-top<80);
+  restoring=true;
+  try{
+    resetSession(event.session_id,false);
+    for(const turn of event.turns){
+      const qa=beginQA(turn.question,turn.at||'',{...turn,session_id:event.session_id});
+      qa.status=turn.status;
+      latestGeneration=Math.max(latestGeneration,turn.generation);
+      lastQuestion=turn.question;
+      for(const answer of turn.answers||[]){
+        let target;
+        if(answer.level==='quick'){
+          target={qa,box:qa.card,raw:'',level:'quick',taskId:answer.task_id};
+          taskTargets.set(answer.task_id,target);
+        }else if(answer.level==='detail'){
+          beginSub(qa,answer.direction,'',answer.task_id);
+          target=taskTargets.get(answer.task_id);
+        }else continue;
+        target.attempt=answer.attempt||0;target.model=answer.model||'';
+        renderAnswer(target,answer.content,answer.status,answer.error,answer.document);
+        if(!['pending','streaming'].includes(answer.status))taskTargets.delete(answer.task_id);
+      }
+      updateDirectionButtons(qa);
+    }
+    streamEpoch=position.epoch;lastSequence=position.sequence;
+    if(!followLatest&&selectedTurn){
+      for(const item of $('questionList').children)item.setAttribute('aria-current',String(item.dataset.turnId===selectedTurn));
+    }
+    $('connectionState').textContent='已连接';
+  }finally{
+    restoring=false;
+    followReading=followLatest;
+    feed.scrollTop=followLatest?feed.scrollHeight:top;
+    $('followLatest').hidden=followLatest;
+  }
 }
 
 function connectSSE(){
   if(es)es.close();
-  es=new EventSource('/api/events');
-  es.onmessage=m=>{
+  const source=new EventSource('/api/events');es=source;
+  source.onmessage=m=>{
+    if(es!==source)return;
     let ev;try{ev=JSON.parse(m.data)}catch(e){return}
     const t=ev.type;
+    if(t==='session_snapshot'){restoreSnapshot(ev);return;}
+    const position=eventPosition(ev.event_id||m.lastEventId);
+    if(t==='stream_ready'){
+      if(position&&position.epoch===streamEpoch&&position.sequence===lastSequence){
+        $('connectionState').textContent='已连接';
+      }else connectSSE();
+      return;
+    }
+    if(position){
+      if(position.epoch===streamEpoch&&position.sequence<=lastSequence)return;
+      if(position.epoch!==streamEpoch||position.sequence!==lastSequence+1){connectSSE();return;}
+      lastSequence=position.sequence;
+    }
+    if(t==='session_reset'){resetSession(ev.session_id);return;}
+    if(ev.session_id){
+      if(currentSession===null)currentSession=ev.session_id;
+      if(ev.session_id!==currentSession)return;
+    }
     if(t==='question'){
       const spk=ev.speaker||'interviewer';
       if(spk==='self'){
@@ -382,7 +631,7 @@ function connectSSE(){
       }else if(ev.manual){
         // 手动输入问题 → 直接建卡（保留原有快速提问路径）
         window._voiceQ=false;
-        lastQuestion=ev.text;beginQA(ev.text,ev.at||'');
+        lastQuestion=ev.text;
       }else{
         // 扬声器通道：面试官发言 → 左蓝气泡；合并成题时由 answer_start 出卡
         window._voiceQ=true;
@@ -392,58 +641,43 @@ function connectSSE(){
         window._pendingBub=bub;
       }
     }else if(t==='answer_start'){
-      // 合并后的完整问题：更新最近一个面试官气泡文本（若 VAD 拆段）
-      let anchor=null;
-      if(ev.question){
-        lastQuestion=ev.question;
-        anchor=window._pendingBub;
-        if(anchor)anchor.textContent=esc(ev.question);
-        window._pendingBub=null;
-      }
-      // 语音触发出题 → 总开新卡；手动题 → 更新已有卡
-      if(window._voiceQ){
-        const qaObj=beginQA(ev.question||lastQuestion||'',ev.at||'');
-        // AI 卡插到面试官气泡正下方：卡在上、我的口述气泡在下，不会显得 AI 在评点我的发言
-        if(anchor&&anchor.isConnected&&qaObj.el.isConnected){
-          anchor.insertAdjacentElement('afterend',qaObj.el);
+      if(!ev.turn_id||!ev.task_id||ev.generation<latestGeneration||taskTargets.has(ev.task_id))return;
+      latestGeneration=ev.generation;
+      for(const [id,target] of taskTargets){
+        if(target.level==='quick'){
+          renderAnswer(target,target.raw,'cancelled');taskTargets.delete(id);
         }
-      }else if(curQA&&curQA.el&&curQA.el.isConnected){
-        curQA.raw='';
-        curQA.card.classList.add('pending');
-        curQA.card.textContent='思考中…';
-        const oldDir=curQA.el.querySelector('.dirrow');if(oldDir)oldDir.remove();
-        const qb=curQA.el.querySelector('.qbox');
-        if(qb&&ev.question)qb.innerHTML=`<span class="t">${ev.at||''}</span>${md(ev.question)}`;
-      }else{
-        beginQA(ev.question||lastQuestion||'',ev.at||'');
+      }
+      lastQuestion=ev.question||'';
+      const anchor=window._pendingBub;window._pendingBub=null;
+      const qa=qaByTurn.get(ev.turn_id)||beginQA(lastQuestion,ev.at||'',ev);
+      const target={qa,box:qa.card,raw:'',level:'quick',taskId:ev.task_id,attempt:0,model:''};
+      taskTargets.set(ev.task_id,target);renderAnswer(target,'','pending');
+      if(anchor?.isConnected){
+        anchor.textContent=ev.question;
+        anchor.closest('.bubrow').insertAdjacentElement('afterend',qa.el);
       }
     }else if(t==='detail_start'){
-      const target=(curQA&&!curQA.subs?.[ev.direction])?curQA:
-                   (document.querySelectorAll('.qa:last-child')[0]||{});
-      if(target&&target.el)beginSub(target.el,ev.direction,ev.at);
-      else if(curQA)beginSub(curQA.el,ev.direction,ev.at);
-    }else if(t==='answer_delta'){
-      if(!curQA)return;
-      curQA.raw+=ev.delta||'';
-      if(curQA.mode==='detail'&&curQA.activeSub){
-        curQA.activeSub.classList.remove('pending');
-        curQA.activeSub.innerHTML=`<div class="hd">🔎 深挖</div>`+md(curQA.raw);
-      }else{
-        renderQuick(curQA.card,curQA.raw,false);
+      const qa=qaByTurn.get(ev.turn_id);
+      if(!qa||qa.generation!==ev.generation||!ev.task_id||taskTargets.has(ev.task_id))return;
+      beginSub(qa,ev.direction,ev.at,ev.task_id);updateDirectionButtons(qa);
+    }else if(['answer_context','answer_attempt','answer_delta','answer_done','answer_error','answer_cancelled'].includes(t)){
+      const target=taskTargets.get(ev.task_id);
+      if(!target||target.qa.turnId!==ev.turn_id||target.qa.generation!==ev.generation||target.level!==ev.level)return;
+      if(t==='answer_context'){
+        target.sources=Array.isArray(ev.sources)?ev.sources:[];return;
       }
-      curQA.el.scrollIntoView({block:'end'});
-    }else if(t==='answer_done'){
-      if(!curQA)return;
-      if(ev.level==='detail'){
-        curQA.mode='quick';
-        if(curQA.activeSub){
-          curQA.activeSub.classList.remove('pending');
-          curQA.activeSub.innerHTML=`<div class="hd">🔎 深挖 · ${esc(ev.direction||'')}</div>`+md(ev.full);
-          curQA.activeSub=null;
-        }
-      }else{
-        curQA.mode='quick';       // 快速卡完成，等待可能的深挖
-        renderQuick(curQA.card,ev.full,true);
+      if(t==='answer_attempt'){
+        if(!Number.isInteger(ev.attempt)||ev.attempt<=(target.attempt||0))return;
+        target.attempt=ev.attempt;target.model=ev.model||'';
+        renderAnswer(target,'','pending');return;
+      }
+      if(t!=='answer_cancelled'&&(ev.attempt||0)!==(target.attempt||0))return;
+      const status=t==='answer_cancelled'?'cancelled':t==='answer_error'?'error':t==='answer_done'?'complete':'streaming';
+      const content=t==='answer_done'?ev.full:target.raw+(ev.delta||'');
+      renderAnswer(target,content,status,ev.message,ev.document);
+      if(t!=='answer_delta'){
+        taskTargets.delete(ev.task_id);updateDirectionButtons(target.qa);
       }
     }else if(t==='status'){
       addSys((ev.level==='error'?'⚠ ':'')+ev.message,ev.level==='error');
@@ -451,75 +685,69 @@ function connectSSE(){
       addSys(`✅ 校准完成：噪声底 ${ev.noise_floor}dB，触发阈值 ${ev.enter}dB`);
     }
   };
-  es.onerror=()=>{/*浏览器自动重连*/};
+  source.onopen=()=>{if(es===source)$('connectionState').textContent='同步中';};
+  source.onerror=()=>{if(es===source)$('connectionState').textContent='连接中断';};
 }
 
 async function askDetail(direction,qaEl,chipEl){
-  // 已有同向子卡则不再重复请求
-  if(qaEl.subs&&qaEl.subs[direction])return;
+  const qa=qaByTurn.get(qaEl.dataset.turnId);
+  if(!qa)return;
+  const existing=qa.subs.get(direction);
+  if(existing&&!['error','cancelled'].includes(existing.status))return;
   // 禁用本行所有芯片，防连点
   const row=chipEl.closest('.dirrow');
   row.querySelectorAll('.chip').forEach(c=>c.disabled=true);
-  const r=await fetch('/api/detail',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({direction})});
-  const j=await r.json();
-  if(!j.ok){
-    addSys('⚠ 深挖失败: '+(j.error||'?'),true);
-    row.querySelectorAll('.chip').forEach(c=>c.disabled=false);
-  }else{
-    curQA&&curQA.el===qaEl&&(curQA.mode='detail');
-    if(!curQA||curQA.el!==qaEl){
-      // 点击的不是最新题（少见），给个提示
-      addSys('深挖请求已发送：'+direction);
-    }
+  try{
+    const r=await fetch('/api/detail',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({direction,turn_id:qa.turnId,session_id:qa.sessionId})});
+    const j=await r.json();
+    if(!j.ok)throw new Error(j.error||'请求失败');
+  }catch(error){
+    addSys('深挖失败: '+error.message,true);updateDirectionButtons(qa);
   }
 }
 
 /* ---------- 控制区 ---------- */
-$('btnStart').onclick=async()=>{
-  const idx=$('deviceSel').value;
-  const midx=$('micSel').value;
-  const body={source:'loopback'};
-  if(idx!=='')body.device_index=parseInt(idx);
-  const r=await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(body)});
-  const j=await r.json();
-  if(j.ok){$('btnStart').disabled=true;$('btnStop').disabled=false;}
-  else addSys('启动失败: '+(j.error||'?'),true);
-  // 麦克风选了就一并启动（失败不阻塞，只提示）
-  if(midx!==''){
-    const r2=await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({source:'mic',device_index:parseInt(midx)})});
-    const j2=await r2.json();
-    if(j2.ok)addSys('🎤 麦克风监听已开启：你的回答将转写并作为AI上下文（浮条可见）');
-    else addSys('⚠ 麦克风启动失败: '+(j2.error||'?')+'（不影响面试官侧）',true);
+async function captureRequest(action,source,selection){
+  const body={source};
+  if(action==='start')body.device_index=selection===''||selection==='default'?null:Number(selection);
+  const r=await fetch('/api/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const value=await r.json();
+  if(!r.ok||!value.ok)throw new Error(value.error||'采集操作失败');
+}
+async function captureAction(work){
+  if(captureBusy)return;
+  captureBusy=true;
+  for(const id of ['btnStart','btnStop','micSel','deviceSel'])$(id).disabled=true;
+  try{await work();}catch(error){addSys(error.message,true);}
+  finally{
+    captureBusy=false;$('micSel').disabled=false;$('deviceSel').disabled=false;
+    await refreshState();
   }
+}
+$('btnStart').onclick=async()=>{
+  await captureAction(async()=>{
+    await captureRequest('start','loopback',$('deviceSel').value);
+    if($('micSel').value!=='')await captureRequest('start','mic',$('micSel').value);
+  });
 };
 $('btnStop').onclick=async()=>{
-  await fetch('/api/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
-  await fetch('/api/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:'mic'})});
-  $('btnStart').disabled=false;$('btnStop').disabled=true;
+  await captureAction(async()=>{
+    const results=await Promise.allSettled([captureRequest('stop','loopback'),captureRequest('stop','mic')]);
+    const error=results.find(r=>r.status==='rejected');if(error)throw error.reason;
+  });
 };
+$('micSel').onchange=()=>{if(captureActive)captureAction(()=>captureRequest($('micSel').value===''?'stop':'start','mic',$('micSel').value));};
+$('deviceSel').onchange=()=>{if(captureActive)captureAction(()=>captureRequest('start','loopback',$('deviceSel').value));};
 $('btnRecal').onclick=()=>fetch('/api/recalibrate',{method:'POST'});
-$('btnResume').onclick=async()=>{
-  const inp=document.createElement('input');
-  inp.type='file';inp.accept='.pdf,.md,.txt';
-  inp.onchange=async()=>{
-    if(!inp.files||!inp.files[0])return;
-    const fd=new FormData();fd.append('file',inp.files[0]);
-    addSys('正在解析简历 '+inp.files[0].name+' …');
-    const r=await fetch('/api/resume/upload',{method:'POST',body:fd});
-    const j=await r.json();
-    window._resumeAnnounced=false;
-    if(j.ok){addSys('✅ 简历已更新: '+j.meta.source+'('+j.meta.chars+'字)，即刻生效');}
-    else{addSys('⚠ 简历解析失败: '+(j.error||'?')+' — 已保留原简历',true);}
-  };
-  inp.click();
-};
+$('btnResume').onclick=()=>{location.href='/files?kind=resume';};
 $('btnClear').onclick=async()=>{
   if(!confirm('清空屏幕和 AI 对话记忆？'))return;
-  await fetch('/api/clear',{method:'POST'});
-  $('feed').innerHTML='';addSys('已清空，开始新一轮');
+  try{
+    const r=await fetch('/api/clear',{method:'POST'});const j=await r.json();
+    if(!j.ok)throw new Error(j.error||'请求失败');
+    if(currentSession!==j.session_id)connectSSE();
+  }catch(error){addSys('清空失败: '+error.message,true);}
 };
 
 /* ---------- 知识库管理面板 ---------- */
@@ -594,7 +822,7 @@ async function kbRemoveMat(key){
   const j=await r.json();
   if(j.ok){addSys('✅ 材料已删除');refreshKB();}else{addSys('⚠ 删除失败: '+(j.error||'?'),true);}
 }
-$('btnKB').onclick=()=>{ $('kbOverlay').classList.add('show'); refreshKB(); };
+$('btnKB').onclick=()=>{location.href='/files';};
 $('kbClose').onclick=()=>$('kbOverlay').classList.remove('show');
 $('kbOverlay').addEventListener('click',e=>{ if(e.target.id==='kbOverlay')$('kbOverlay').classList.remove('show'); });
 
@@ -614,16 +842,6 @@ document.addEventListener('keydown',e=>{
   }else if(e.key==='F9'){$('btnClear').click();e.preventDefault();}
 });
 
-// init
-fetch('/api/state').then(r=>r.json()).then(async s=>{
-  if(!s.listening){
-    const r=await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({source:'loopback'})});
-    const j=await r.json();
-    if(j.ok){$('btnStart').disabled=true;$('btnStop').disabled=false;
-      addSys('已自动开启面试官侧监听: '+j.device);}
-  }
-});
 refreshState();setInterval(refreshState,800);
 connectSSE();
 </script>

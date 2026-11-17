@@ -209,8 +209,10 @@ def test_bounded_queue_drops_overflow_and_counts_drain() -> None:
     collector = _Collector()
     service = _service(transcriber, collector, queue_size=1)
     service.start()
-    _push(service.current_source, THREE_SEGMENTS_SERIES)
+    _push(service.current_source, ONE_SEGMENT_SERIES)
     assert transcriber.entered.wait(5.0)
+    # Hold seg1 before producing seg2/seg3, independent of reader startup order.
+    _push(service.current_source, ([SPEECH] * 5 + [SILENCE] * 10) * 2)
     # seg1 held by the blocked worker, seg2 fills the queue, seg3 must drop
     assert _wait_until(lambda: service.snapshot()["dropped_segments"] >= 1)
     service.stop()

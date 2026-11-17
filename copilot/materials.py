@@ -12,6 +12,7 @@ import os
 import re
 import threading
 import time
+from uuid import uuid4
 
 import httpx
 
@@ -28,6 +29,7 @@ TEXT_EXTS = {".md", ".txt", ".py", ".js", ".ts", ".java", ".go", ".c", ".cpp",
              ".css", ".xml", ".ini", ".cfg", ".toml", ".sh", ".bat", ".csv"}
 
 _lock = threading.Lock()
+_meta_lock = threading.Lock()
 MATS: list = []           # [{key,kind,source,origin,title,digest,full,mtime}]
 
 DIGEST_PROMPT = """你是材料摘要卡生成器。下面是候选人提供的辅助材料（可能是需求文档、技术方案、代码片段或参考资料）。
@@ -59,7 +61,8 @@ def _read_file(path: str) -> str:
     return clean_text(raw)[:MAX_FULL]
 
 
-def ingest(path: str, cfg: dict, note: str = "", allow_cache: bool = True) -> dict | None:
+def ingest(path: str, cfg: dict, note: str = "", allow_cache: bool = True,
+           source_name: str | None = None) -> dict | None:
     text = _read_file(path)
     if len(text) < 30:
         return None
@@ -82,20 +85,20 @@ def ingest(path: str, cfg: dict, note: str = "", allow_cache: bool = True) -> di
         except Exception:
             cache = None
     if not digest:
-        digest = _llm_digest(httpx.Client(), _llm_conf(cfg), text,
-                             prompt=DIGEST_PROMPT, max_out=300)
+        with httpx.Client() as client:
+            digest = _llm_digest(client, _llm_conf(cfg), text,
+                                 prompt=DIGEST_PROMPT, max_out=300)
     with open(out_txt, "w", encoding="utf-8") as f:
         f.write(text)
-    if digest:
-        try:
-            with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump({"source": os.path.basename(path), "origin": path,
-                           "title": (cache or {}).get("title") or _short_title(text),
-                           "digest": digest, "mtime": mtime}, f, ensure_ascii=False)
-        except Exception:
-            pass
+    try:
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump({"source": source_name or (cache or {}).get("source") or os.path.basename(path), "origin": path,
+                       "title": (cache or {}).get("title") or _short_title(text),
+                       "digest": digest, "mtime": mtime}, f, ensure_ascii=False)
+    except Exception:
+        pass
     return {"key": stem, "kind": "material",
-            "source": os.path.basename(path), "origin": path,
+            "source": source_name or (cache or {}).get("source") or os.path.basename(path), "origin": path,
             "title": (cache or {}).get("title") or _short_title(text),
             "digest": digest, "full": text, "mtime": mtime, "note": note}
 
@@ -143,28 +146,13 @@ def reload_sync(cfg: dict, broadcast=None) -> list:
         if broadcast:
             broadcast({"type": "status",
                        "message": f"🧩 辅助材料已入库: {item['source']}"})
-    # 记录已知来源
-    try:
-        meta = json.load(open(META_JSON, encoding="utf-8"))
-    except Exception:
-        meta = {}
-    known = meta.get("known", [])
     with _lock:
-        changed = False
-        for m in MATS:
-            if m["origin"] not in known:
-                known.append(m["origin"])
-                changed = True
-    if changed:
-        try:
-            with open(META_JSON, "w", encoding="utf-8") as f:
-                json.dump({"known": known}, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+        origins = [m["origin"] for m in MATS]
+    _remember_origins(origins)
     return loaded
 
 
-def start_background_load(cfg: dict, broadcast=None):
+def start_background_load(cfg: dict, broadcast=None, workers=None):
     def work():
         try:
             reload_sync(cfg, broadcast=broadcast)
@@ -178,23 +166,46 @@ def start_background_load(cfg: dict, broadcast=None):
             if broadcast:
                 broadcast({"type": "status", "level": "error",
                            "message": f"材料加载失败: {e}"})
-    threading.Thread(target=work, daemon=True).start()
+    if workers is not None:
+        workers.start(work, name="material-loader")
+    else:
+        threading.Thread(target=work, daemon=True).start()
 
 
 def add_file(path: str, cfg: dict, broadcast=None) -> dict | None:
     import shutil
     os.makedirs(MAT_DIR, exist_ok=True)
-    dest = os.path.join(MAT_DIR, os.path.basename(path))
+    source_name = os.path.basename(path)
+    dest = os.path.join(MAT_DIR, uuid4().hex + "_" + source_name)
     shutil.copyfile(path, dest)
-    item = ingest(dest, cfg, note="upload")
+    item = ingest(dest, cfg, note="upload", source_name=source_name)
     if not item:
         return None
     with _lock:
         MATS[:] = [m for m in MATS if m["origin"] != dest]
         MATS.append(item)
+    _remember_origins([dest])
     if broadcast:
         broadcast({"type": "status", "message": f"🧩 材料已入库: {item['source']}"})
     return item
+
+
+def _remember_origins(origins):
+    with _meta_lock:
+        try:
+            with open(META_JSON, encoding="utf-8") as handle:
+                meta = json.load(handle)
+        except (OSError, ValueError):
+            meta = {}
+        known = meta.setdefault("known", [])
+        changed = False
+        for origin in origins:
+            if origin not in known:
+                known.append(origin)
+                changed = True
+        if changed:
+            with open(META_JSON, "w", encoding="utf-8") as handle:
+                json.dump(meta, handle, ensure_ascii=False, indent=2)
 
 
 def remove(key: str) -> bool:
@@ -227,6 +238,13 @@ def digests_block(limit: int = 1500) -> str:
         parts.append(f"【辅助材料{i}·{m['source']}】\n{body}")
         used += len(body)
     return "\n".join(parts)
+
+
+def corpus_documents() -> list[dict]:
+    with _lock:
+        return [{"id": item["key"], "source": "materials:" + item["key"] + "/" + item["source"],
+                 "title": item["title"], "text": item["full"], "kind": "reference"}
+                for item in MATS]
 
 
 def _bigrams(s: str):

@@ -6,7 +6,7 @@ Interview Copilot is licensed under the Apache License, Version 2.0. The project
 
 This inventory covers third-party Python packages directly imported by the Python files currently tracked in this repository, together with components that those packages are documented to include or statically link. Python standard-library modules, local `copilot` modules, other transitive dependencies, external API services, and software that is not directly imported or bundled are outside this inventory.
 
-The repository currently has no tracked dependency manifest or lock file, so no installed package versions are asserted here. Before distributing a bundled application, wheel set, container, or executable, regenerate notices from the exact resolved artifacts and preserve any additional license or notice files shipped with them.
+Python dependency declarations are in `pyproject.toml`; there is no resolved lock file. Before distributing a bundled application, wheel set, container, or executable, regenerate notices from the exact resolved artifacts and preserve any additional license or notice files shipped with them.
 
 ## Direct imports
 
@@ -18,6 +18,9 @@ The repository currently has no tracked dependency manifest or lock file, so no 
 | [PyAudioWPatch](https://github.com/s0d3s/PyAudioWPatch) | Windows WASAPI audio capture. Windows-specific dependency, but currently imported unconditionally by `copilot/audio.py`, which `server.py` imports at startup. Its Windows extension retains PyAudio code and statically links its bundled PortAudio build. | Mixed: Apache-2.0 (PyAudioWPatch changes); MIT (retained PyAudio code); MIT (bundled PortAudio code) | [PyAudioWPatch `LICENSE.txt`](https://github.com/s0d3s/PyAudioWPatch/blob/8b68e78c31dd1e12e9c603901b8cd0d9d6510b2a/LICENSE.txt); retained [PyAudio notice](https://github.com/s0d3s/PyAudioWPatch/blob/8b68e78c31dd1e12e9c603901b8cd0d9d6510b2a/setup.py#L1-L27); bundled [PortAudio `LICENSE.txt`](https://github.com/s0d3s/PyAudioWPatch/blob/8b68e78c31dd1e12e9c603901b8cd0d9d6510b2a/portaudio_v19/LICENSE.txt) |
 | [pypdf](https://github.com/py-pdf/pypdf) | PDF text extraction. Feature-specific dependency, but currently imported unconditionally by `copilot/resume.py`, which `server.py` imports at startup. | BSD-3-Clause | [Upstream `LICENSE`](https://github.com/py-pdf/pypdf/blob/main/LICENSE) |
 | [Uvicorn](https://github.com/Kludex/uvicorn) | ASGI server runner imported only when `server.py` is executed as the main program; an alternative ASGI runner may be used instead. | BSD-3-Clause | [Upstream `LICENSE.md`](https://github.com/Kludex/uvicorn/blob/master/LICENSE.md) |
+| [markdown-it-py](https://github.com/executablebooks/markdown-it-py) | Server-side answer Markdown rendering. | MIT | [Upstream `LICENSE`](https://github.com/executablebooks/markdown-it-py/blob/master/LICENSE) |
+| [qrcode](https://github.com/lincolnloop/python-qrcode) | SVG pairing QR generation; no raster image dependency required. | BSD-3-Clause | [Upstream `LICENSE`](https://github.com/lincolnloop/python-qrcode/blob/main/LICENSE) |
+| [Lucide](https://lucide.dev/) | Vendored 0.468.0 UMD browser icons in `static/vendor/lucide.js`. | ISC; retained Feather portions MIT | Complete supplied notice: [`static/vendor/LICENSE`](static/vendor/LICENSE) |
 
 The licenses identified above are permissive (Apache-2.0, MIT, or BSD-3-Clause). They may be distributed alongside this Apache-2.0-licensed project, but each dependency and bundled component remains governed by its own terms and its notices must be retained. This is a source inventory, not legal advice.
 

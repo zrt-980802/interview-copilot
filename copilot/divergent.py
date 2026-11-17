@@ -136,8 +136,8 @@ def wiki_ok() -> bool:
         return bool(_st_cache["ok"])
 
 
-def gather_enrichment(question: str, max_seconds: float = 32.0) -> str:
-    """并行采 wiki+web，拼成补充资料块。绝不抛异常、不超时。"""
+def gather_enrichment(question: str, max_seconds: float = 32.0, workers=None) -> str:
+    """Collect within a time budget; runtime-owned child workers remain tracked."""
     if not _classify(question):
         return ""
     result = {"wiki": [], "web": []}
@@ -148,11 +148,17 @@ def gather_enrichment(question: str, max_seconds: float = 32.0) -> str:
     def do_web():
         result["web"] = web_search(question)
 
-    t1 = threading.Thread(target=do_wiki, daemon=True)
-    t2 = threading.Thread(target=do_web, daemon=True)
-    t1.start(); t2.start()
-    t1.join(max_seconds)
-    t2.join(max_seconds)
+    deadline = time.monotonic() + max_seconds
+    if workers is not None:
+        t1 = workers.start(do_wiki, name="wiki-search")
+        t2 = workers.start(do_web, name="web-search")
+    else:
+        t1 = threading.Thread(target=do_wiki, daemon=True)
+        t2 = threading.Thread(target=do_web, daemon=True)
+        t1.start()
+        t2.start()
+    t1.join(max(0, deadline - time.monotonic()))
+    t2.join(max(0, deadline - time.monotonic()))
 
     parts = []
     if result["wiki"]:
