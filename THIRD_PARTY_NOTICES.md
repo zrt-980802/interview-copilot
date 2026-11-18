@@ -14,8 +14,9 @@ Python dependency declarations are in `pyproject.toml`; there is no resolved loc
 | --- | --- | --- | --- |
 | [FastAPI](https://github.com/fastapi/fastapi) | Core HTTP API and static/SSE responses; imported unconditionally by `server.py`. | MIT | [Upstream `LICENSE`](https://github.com/fastapi/fastapi/blob/master/LICENSE) |
 | [HTTPX](https://github.com/encode/httpx) | Core HTTP client used by STT, LLM, enrichment, paper, material, and related test code. | BSD-3-Clause | [Upstream `LICENSE.md`](https://github.com/encode/httpx/blob/master/LICENSE.md) |
-| [NumPy](https://github.com/numpy/numpy) | Windows audio sample processing. Platform-feature dependency, but currently imported unconditionally by `copilot/audio.py`, which `server.py` imports at startup. | BSD-3-Clause | [Upstream `LICENSE.txt`](https://github.com/numpy/numpy/blob/main/LICENSE.txt) |
-| [PyAudioWPatch](https://github.com/s0d3s/PyAudioWPatch) | Windows WASAPI audio capture. Windows-specific dependency, but currently imported unconditionally by `copilot/audio.py`, which `server.py` imports at startup. Its Windows extension retains PyAudio code and statically links its bundled PortAudio build. | Mixed: Apache-2.0 (PyAudioWPatch changes); MIT (retained PyAudio code); MIT (bundled PortAudio code) | [PyAudioWPatch `LICENSE.txt`](https://github.com/s0d3s/PyAudioWPatch/blob/8b68e78c31dd1e12e9c603901b8cd0d9d6510b2a/LICENSE.txt); retained [PyAudio notice](https://github.com/s0d3s/PyAudioWPatch/blob/8b68e78c31dd1e12e9c603901b8cd0d9d6510b2a/setup.py#L1-L27); bundled [PortAudio `LICENSE.txt`](https://github.com/s0d3s/PyAudioWPatch/blob/8b68e78c31dd1e12e9c603901b8cd0d9d6510b2a/portaudio_v19/LICENSE.txt) |
+| [NumPy](https://github.com/numpy/numpy) | Cross-platform audio sample processing, imported by the legacy audio engine. | BSD-3-Clause | [Upstream `LICENSE.txt`](https://github.com/numpy/numpy/blob/main/LICENSE.txt) |
+| [PyAudioWPatch](https://github.com/s0d3s/PyAudioWPatch) | Windows WASAPI audio capture. Its Windows extension retains PyAudio code and statically links its bundled PortAudio build. | Mixed: Apache-2.0 (PyAudioWPatch changes); MIT (retained PyAudio code); MIT (bundled PortAudio code) | [PyAudioWPatch `LICENSE.txt`](https://github.com/s0d3s/PyAudioWPatch/blob/8b68e78c31dd1e12e9c603901b8cd0d9d6510b2a/LICENSE.txt); retained [PyAudio notice](https://github.com/s0d3s/PyAudioWPatch/blob/8b68e78c31dd1e12e9c603901b8cd0d9d6510b2a/setup.py#L1-L27); bundled [PortAudio `LICENSE.txt`](https://github.com/s0d3s/PyAudioWPatch/blob/8b68e78c31dd1e12e9c603901b8cd0d9d6510b2a/portaudio_v19/LICENSE.txt) |
+| [python-sounddevice](https://github.com/spatialaudio/python-sounddevice) | macOS CoreAudio input capture through PortAudio. Installed only on macOS. | MIT; PortAudio is MIT | [Upstream `LICENSE`](https://github.com/spatialaudio/python-sounddevice/blob/master/LICENSE); [PortAudio `LICENSE.txt`](https://github.com/PortAudio/portaudio/blob/master/LICENSE.txt) |
 | [pypdf](https://github.com/py-pdf/pypdf) | PDF text extraction. Feature-specific dependency, but currently imported unconditionally by `copilot/resume.py`, which `server.py` imports at startup. | BSD-3-Clause | [Upstream `LICENSE`](https://github.com/py-pdf/pypdf/blob/main/LICENSE) |
 | [Uvicorn](https://github.com/Kludex/uvicorn) | ASGI server runner imported only when `server.py` is executed as the main program; an alternative ASGI runner may be used instead. | BSD-3-Clause | [Upstream `LICENSE.md`](https://github.com/Kludex/uvicorn/blob/master/LICENSE.md) |
 | [markdown-it-py](https://github.com/executablebooks/markdown-it-py) | Server-side answer Markdown rendering. | MIT | [Upstream `LICENSE`](https://github.com/executablebooks/markdown-it-py/blob/master/LICENSE) |
@@ -244,6 +245,34 @@ Implementation files to contain:
  */
 <<<<<
 ```
+
+### python-sounddevice — MIT
+
+```text
+MIT License
+
+Copyright (c) 2015-2025 Matthias Geier
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+python-sounddevice uses PortAudio. The complete PortAudio MIT notice is reproduced above under “Bundled PortAudio notice — MIT”; it also applies when PortAudio is supplied dynamically or with a platform wheel.
 
 ### pypdf — BSD-3-Clause
 

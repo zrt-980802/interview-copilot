@@ -53,7 +53,8 @@ from interview_copilot.services.remote_documents import download_github
 from interview_copilot.services.provider_settings import ProviderSettings, ProviderSettingsError, probe_provider
 from interview_copilot.legacy.mobile import create_mobile_app
 
-from copilot.audio import AudioEngine, list_output_devices, list_input_devices  # noqa: E402
+from copilot.audio import (AudioEngine, audio_status, configure_audio,
+                           list_output_devices, list_input_devices)  # noqa: E402
 from copilot.llm import LLMClient, StreamCancelled                             # noqa: E402
 from copilot import resume as resume_store                                     # noqa: E402
 from copilot import knowledge                                                  # noqa: E402
@@ -646,6 +647,7 @@ def start_runtime(config=None, *, history_factory=HistoryStore, llm_factory=None
             with open(os.path.join(BASE_DIR, "config.json"), "r", encoding="utf-8") as f:
                 config = json.load(f)
         CFG = deepcopy(config)
+        configure_audio(CFG.get("audio", {}))
         MERGE_WAIT_MS = int(CFG.get("merge", {}).get("wait_ms", 1100))
         CONTINUATION_MS = int(CFG.get("merge", {}).get("smart_continuation_ms",8000))
         rt = SimpleNamespace(ready=False, workers=worker_factory(), engines=[], llm=None,
@@ -881,6 +883,7 @@ async def state():
         },
         "devices": list_output_devices(),
         "input_devices": list_input_devices(),
+        "audio": audio_status(),
     }
 
 

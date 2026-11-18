@@ -173,7 +173,15 @@ def load_synthetic_server(monkeypatch, *, started=True):
     materials = SimpleNamespace(start_background_load=lambda *a, **k: None, load_status=lambda: {"items": []}, digests_block=lambda: "", relevant_context=lambda q: "")
     divergent = SimpleNamespace(_classify=lambda q: False, gather_enrichment=lambda q, **kw: "")
     llm = FakeLLM()
-    audio = SimpleNamespace(AudioEngine=Engine, list_output_devices=lambda: [], list_input_devices=lambda: [], shutdown_audio=lambda **kw: None)
+    audio = SimpleNamespace(
+        AudioEngine=Engine,
+        audio_status=lambda: {"platform": "Synthetic", "backend": "synthetic",
+                              "system_audio_available": True, "message": ""},
+        configure_audio=lambda config=None: None,
+        list_output_devices=lambda: [],
+        list_input_devices=lambda: [],
+        shutdown_audio=lambda **kw: None,
+    )
     llm_module = SimpleNamespace(LLMClient=lambda config=None: llm, StreamCancelled=type("StreamCancelled", (RuntimeError,), {}))
     for name, fake in {"audio": audio, "llm": llm_module, "resume": resume, "knowledge": knowledge, "materials": materials, "divergent": divergent, "history": history}.items():
         monkeypatch.setitem(sys.modules, "copilot." + name, fake)

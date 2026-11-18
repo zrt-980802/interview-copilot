@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "interview-copilot"
 version = "0.1.0"
-description = "Windows-first local interview copilot"
+description = "Local interview copilot for Windows and macOS"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
@@ -21,6 +21,7 @@ dependencies = [
 audio = [
     "numpy>=1.26,<3",
     "PyAudioWPatch>=0.2.12.7; platform_system == 'Windows'",
+    "sounddevice>=0.5,<1; platform_system == 'Darwin'",
 ]
 pdf = ["pypdf>=5,<7"]
 semantic = ["sentence-transformers>=3,<6"]

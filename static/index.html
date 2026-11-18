@@ -215,7 +215,7 @@
 <section class="capture-panel" aria-label="声音采集">
   <div class="capture-heading"><h2>声音采集</h2><span class="capture-status" role="status"><span id="stateDot"></span><span id="captureStatus">未开启</span></span><button id="btnRefreshDevices" class="command subtle"><i data-lucide="refresh-cw"></i>刷新设备</button></div>
   <div class="capture-controls">
-    <label class="device-control"><span><i data-lucide="headphones"></i>面试官 · 播放设备</span><select id="deviceSel" aria-label="面试官播放设备" title="会议软件播放声音的耳机、扬声器或声卡"><option value="">系统默认输出</option></select><small id="outputDeviceState">尚未采集</small></label>
+    <label class="device-control"><span id="systemAudioLabel"><i data-lucide="headphones"></i>面试官 · 播放设备</span><select id="deviceSel" aria-label="面试官播放设备" title="会议软件播放声音的耳机、扬声器或声卡"><option value="">系统默认输出</option></select><small id="outputDeviceState">尚未采集</small></label>
     <label class="device-control"><span><i data-lucide="mic"></i>我 · 麦克风输入</span><select id="micSel" aria-label="本人麦克风" title="本人麦克风"><option value="default">系统默认输入</option><option value="">关闭本人麦克风</option></select><small id="inputDeviceState">尚未采集</small></label>
     <div class="capture-commands">
       <button id="btnStart" class="command primary"><i data-lucide="play"></i>开始监听</button>
@@ -341,7 +341,7 @@ function fmtMicLevel(db,speaking,active){
   $('micDot').className='pill'+(active?' on':'')+(speaking?' spk':'');
 }
 
-let captureBusy=false,captureActive=false;
+let captureBusy=false,captureActive=false,macAudio=false;
 function updateDevices(select,devices,defaults){
   const signature=JSON.stringify(devices||[]);
   if(select.dataset.devices===signature)return;
@@ -355,7 +355,8 @@ function updateDevices(select,devices,defaults){
 }
 function outputDefaults(devices){
   const current=(devices||[]).find(device=>device.is_default);
-  return [['',current?'系统默认输出 · '+current.name:'系统默认输出']];
+  const label=macAudio?'系统声音输入':'系统默认输出';
+  return [['',current?label+' · '+current.name:label]];
 }
 function inputDefaults(devices){
   const current=(devices||[]).find(device=>device.is_default);
@@ -369,6 +370,19 @@ function restoreCaptureSelection(select,engine,defaultValue){
 async function refreshState(){
   try{
     const r=await fetch('/api/state');if(!r.ok)throw new Error('状态获取失败');const s=await r.json();
+    macAudio=s.audio?.platform==='macOS';
+    $('systemAudioLabel').innerHTML=macAudio
+      ?'<i data-lucide="audio-lines"></i>面试官 · 系统声音输入'
+      :'<i data-lucide="headphones"></i>面试官 · 播放设备';
+    $('deviceSel').setAttribute('aria-label',macAudio?'系统声音输入设备':'面试官播放设备');
+    $('deviceSel').title=macAudio?'用于接收系统声音的 BlackHole 或其他虚拟输入设备':'会议软件播放声音的耳机、扬声器或声卡';
+    if(!captureBusy&&s.audio?.message){
+      $('captureNotice').textContent=s.audio.message;$('captureNotice').hidden=false;
+      $('captureNotice').classList.add('error');$('captureNotice').dataset.audioDiagnostic='true';
+    }else if(!captureBusy&&$('captureNotice').dataset.audioDiagnostic==='true'){
+      $('captureNotice').hidden=true;$('captureNotice').classList.remove('error');
+      delete $('captureNotice').dataset.audioDiagnostic;
+    }
     captureActive=!!(s.listening||s.self_listening);
     $('captureStatus').textContent=s.listening&&s.self_listening?'双通道采集中':s.listening?'系统声音采集中':s.self_listening?'本人麦克风采集中':'未开启';
     $('btnStart').disabled=captureBusy||!!s.listening;$('btnStop').disabled=captureBusy||!captureActive;
@@ -409,6 +423,7 @@ async function refreshState(){
         b.textContent='简历未加载';b.style.color='var(--accent)';b.title='管理简历';
       }
     }
+    window.lucide?.createIcons();
     if(s.listening){
       const e=s.engine||{};
       fmtLevel(e.last_level_db??-100,e.noise_floor_db,e.speech_enter_db);

@@ -7,6 +7,7 @@ from copilot import audio
 
 
 def test_headphone_loopback_and_microphones_have_independent_defaults(monkeypatch):
+    monkeypatch.setattr(audio.sys, "platform", "win32")
     devices = [
         {"index":0,"name":"Headset microphone","hostApi":0,"maxInputChannels":1},
         {"index":1,"name":"Speakers [Loopback]","hostApi":1,"maxInputChannels":2,"isLoopbackDevice":True},
@@ -42,6 +43,7 @@ def test_headphone_loopback_and_microphones_have_independent_defaults(monkeypatc
 
 
 def test_default_microphone_falls_back_when_wasapi_input_is_unavailable(monkeypatch):
+    monkeypatch.setattr(audio.sys, "platform", "win32")
     def unavailable(**kwargs):
         raise OSError("No WASAPI default input")
     fake = SimpleNamespace(get_default_wasapi_device=unavailable,

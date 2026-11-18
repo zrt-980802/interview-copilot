@@ -98,6 +98,7 @@ def test_audio_stop_reports_live_capture_thread_instead_of_discarding_it():
 
 
 def test_portaudio_start_is_serialized_and_termination_uses_owning_thread(monkeypatch):
+    monkeypatch.setattr(audio.sys, "platform", "win32")
     records = []
 
     class FakePA:
@@ -145,6 +146,7 @@ def test_http_clients_close_and_llm_config_is_per_instance(monkeypatch):
 
 
 def test_portaudio_termination_failure_keeps_owner_for_retry(monkeypatch):
+    monkeypatch.setattr(audio.sys, "platform", "win32")
     attempts = []
 
     class FakePA:

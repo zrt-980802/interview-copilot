@@ -7,7 +7,7 @@ state. The module is pure stdlib (spec 5.1) and performs no I/O.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -187,7 +187,7 @@ class AnswerEvent:
     turn_id: TurnId
     generation: int
     kind: str
-    payload: Mapping[str, Any] = MappingProxyType({})
+    payload: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
     def __post_init__(self) -> None:
         if not isinstance(self.session_id, SessionId):

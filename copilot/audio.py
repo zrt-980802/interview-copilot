@@ -19,6 +19,7 @@ import io
 import json
 import os
 import queue
+import sys
 import threading
 import time
 import wave
@@ -27,7 +28,18 @@ from concurrent.futures import ThreadPoolExecutor, wait
 
 import numpy as np
 
-import pyaudiowpatch as pw
+try:
+    import pyaudiowpatch as pw
+except ImportError:
+    class _UnavailablePyAudio:
+        paContinue = 0
+        paInt16 = 8
+
+        @staticmethod
+        def PyAudio():
+            raise RuntimeError("PyAudioWPatch 仅在 Windows 音频环境中可用")
+
+    pw = _UnavailablePyAudio()
 
 from copilot.hotwords import build_hotwords  # noqa: E402
 from interview_copilot.services.question_flow import is_repetitive_text
@@ -61,6 +73,48 @@ class SimulatedAudioInput:
         self._queue.put(None)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_AUDIO_PREFERENCES = {"system_device_name": "", "mic_device_name": ""}
+
+
+def configure_audio(config: dict | None = None):
+    """Apply platform device preferences without initializing an audio backend."""
+    values = config or {}
+    for key in _AUDIO_PREFERENCES:
+        value = values.get(key, "")
+        _AUDIO_PREFERENCES[key] = value.strip() if isinstance(value, str) else ""
+
+
+def _coreaudio():
+    from interview_copilot.audio import coreaudio
+    return coreaudio
+
+
+def audio_status() -> dict:
+    if sys.platform == "darwin":
+        try:
+            devices = _coreaudio().list_system_devices(_AUDIO_PREFERENCES["system_device_name"])
+            message = _coreaudio().setup_hint(_AUDIO_PREFERENCES["system_device_name"])
+        except Exception as exc:
+            devices, message = [], f"CoreAudio 初始化失败: {exc}"
+        return {
+            "platform": "macOS",
+            "backend": "CoreAudio",
+            "system_audio_available": bool(devices),
+            "message": message,
+        }
+    if sys.platform == "win32":
+        return {
+            "platform": "Windows",
+            "backend": "WASAPI",
+            "system_audio_available": bool(list_output_devices()),
+            "message": "",
+        }
+    return {
+        "platform": sys.platform,
+        "backend": "unsupported",
+        "system_audio_available": False,
+        "message": "当前系统暂不支持音频采集。",
+    }
 
 # ================= 音频管家：单线程 + 单实例 =================
 _PA = None                     # 全局唯一实例（仅在管家线程创建/使用）
@@ -133,6 +187,8 @@ def pa_call(fn, *args, timeout: float = 30.0, **kwargs):
 
 def shutdown_audio(timeout=10.0):
     """Terminate PortAudio on its owning thread, after engines have closed."""
+    if sys.platform == "darwin":
+        return
     global _PA_THREAD, _PA_STOPPING, _PA_SHUTDOWN
     with _PA_LOCK:
         thread = _PA_THREAD
@@ -178,6 +234,9 @@ def pa_open(**kwargs):
 
 
 def pa_close(stream):
+    if sys.platform == "darwin":
+        _coreaudio().close_stream(stream)
+        return
     def _close():
         try:
             stream.stop_stream()
@@ -195,7 +254,17 @@ def pa_enumerate(fn):
 # ================= 设备枚举（全部走管家线程） =================
 
 def list_output_devices():
-    """列出所有 WASAPI loopback 设备。"""
+    """List Windows loopback outputs or macOS virtual system inputs."""
+    if sys.platform == "darwin":
+        try:
+            backend = _coreaudio()
+            devices = backend.list_system_devices(_AUDIO_PREFERENCES["system_device_name"])
+            selected = backend.default_system_device(_AUDIO_PREFERENCES["system_device_name"])
+            selected_index = selected["index"] if selected else None
+            return [{**item, "is_default": item["index"] == selected_index} for item in devices]
+        except Exception:
+            return []
+
     def _list():
         out = []
         try:
@@ -229,6 +298,16 @@ def list_input_devices():
     """列出普通(非回环)输入设备，即麦克风。
     同一物理设备会被 MME/DirectSound/WASAPI 各暴露一次 → 按名称去重，优先 WASAPI；
     过滤'声音映射器/主声音捕获'等虚拟设备。"""
+    if sys.platform == "darwin":
+        try:
+            backend = _coreaudio()
+            devices = backend.list_input_devices()
+            selected = backend.default_input_device(_AUDIO_PREFERENCES["mic_device_name"])
+            selected_index = selected["index"] if selected else None
+            return [{**item, "is_default": item["index"] == selected_index} for item in devices]
+        except Exception:
+            return []
+
     def _list():
         seen: dict = {}
         try:
@@ -270,6 +349,12 @@ def list_input_devices():
 
 def _default_loopback():
     """返回默认输出设备对应的 loopback {index,name,rate}。失败返回 None。"""
+    if sys.platform == "darwin":
+        try:
+            return _coreaudio().default_system_device(_AUDIO_PREFERENCES["system_device_name"])
+        except Exception:
+            return None
+
     def _get():
         info = _PA.get_default_wasapi_loopback()
         return {"index": info["index"],
@@ -282,6 +367,12 @@ def _default_loopback():
 
 
 def _default_input():
+    if sys.platform == "darwin":
+        try:
+            return _coreaudio().default_input_device(_AUDIO_PREFERENCES["mic_device_name"])
+        except Exception:
+            return None
+
     def _get():
         info = _default_input_info()
         return {"index": int(info["index"]), "name": str(info["name"]),
@@ -350,6 +441,8 @@ class AudioEngine:
         self._pool_shutdown = False
         self._running_lock = threading.Lock()
         self._stream = None
+        self._startup_event = threading.Event()
+        self._startup_error = ""
 
         self.noise_floor_db = -70.0
         self.speech_enter_db = -45.0
@@ -411,14 +504,27 @@ class AudioEngine:
                 self._transcribe_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="stt")
                 self._pool_shutdown = False
             self._stop_flag.clear()
+            self._startup_event.clear()
+            self._startup_error = ""
             dev = {"index": None, "name": "simulated", "rate": self.audio_source.sample_rate} if self.audio_source is not None else self._pick_device(device_index)
             if not dev:
+                if self.mode == "loopback" and sys.platform == "darwin":
+                    return {"ok": False, "error": audio_status()["message"] or "未找到可用的系统声音输入设备"}
                 src = "回环" if self.mode == "loopback" else "麦克风输入"
                 return {"ok": False, "error": f"未找到可用的{src}设备"}
             self.device_index = dev["index"]
             self.device_name = f"{dev['name']} ({self.mode})"
             self._thread = threading.Thread(target=self._run_loop, daemon=True)
             self._thread.start()
+            if not self._startup_event.wait(timeout=10):
+                self._stop_flag.set()
+                self._thread.join(timeout=1)
+                self._thread = None
+                return {"ok": False, "error": "音频设备启动超时"}
+            if self._startup_error:
+                self._thread.join(timeout=1)
+                self._thread = None
+                return {"ok": False, "error": self._startup_error}
             return {"ok": True, "device": self.device_name}
 
     def stop(self, timeout=6.0):
@@ -521,6 +627,8 @@ class AudioEngine:
         """在管家线程打开真实设备流；模拟源不需要设备。"""
         if self.audio_source is not None:
             return None, self.audio_source.sample_rate, self.audio_source.channels
+        if sys.platform == "darwin":
+            return _coreaudio().open_input_stream(self.device_index, raw_q)
         """在管家线程打开流。返回 (stream, src_rate, chans)。"""
         def _open():
             dev_info = _PA.get_device_info_by_index(self.device_index)
@@ -548,9 +656,10 @@ class AudioEngine:
         return pa_call(_open)
 
     def _run_loop(self):
-        import sys
-        if sys.platform != "win32" and self.audio_source is None:
-            self._set_error("采集仅支持 Windows (WASAPI)")
+        if sys.platform not in ("win32", "darwin") and self.audio_source is None:
+            self._startup_error = "当前系统暂不支持音频采集"
+            self._set_error(self._startup_error)
+            self._startup_event.set()
             return
 
         frame_ms = int(self.audio_config["frame_ms"])
@@ -576,8 +685,12 @@ class AudioEngine:
             self._stream = stream
         except Exception as e:
             src_label = "麦克风" if self.mode == "mic" else "回环"
-            self._set_error(f"无法打开{src_label}采集: {e}")
+            self._startup_error = f"无法打开{src_label}采集: {e}"
+            self._set_error(self._startup_error)
+            self._startup_event.set()
             return
+
+        self._startup_event.set()
 
         self.status_cb(type="status", level="info",
                        message=f"采集已启动: {self.device_name} @{src_rate}Hz")

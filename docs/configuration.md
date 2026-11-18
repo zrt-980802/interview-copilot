@@ -42,6 +42,8 @@ copy config.example.json config.json
 
 电脑页面默认选中系统默认麦克风，点击“监听”才开始采集；可选择关闭或指定设备，监听中也能切换。启动服务的 `--auto-listen` 仍按本地 `audio.*_device_index` 启动双通道，与网页初始选择独立。
 
+Windows 的系统声音使用 WASAPI loopback。macOS 的系统声音使用 BlackHole 等虚拟 CoreAudio 输入；完整路由步骤见 [macOS 使用说明](macos.md)。
+
 本人转写不触发新题，上一题回答进入下一题的快速上下文，当前题的深挖会参考上一题及当前发言。上下文有字符预算，超长发言保留最近部分；开始新会话清空缓冲。AI 建议和本人真实转写使用不同来源字段，建议不会被记成已说内容。现阶段这些链路已通过合成转写测试，真实设备、STT 准确性和说话时间边界仍需实机验证。
 
 ## 字段映射
@@ -61,6 +63,8 @@ copy config.example.json config.json
 | `mobile.enabled` | 同名 | 是否启用独立手机监听器 | 默认 false；`--mobile` 可单次启用 |
 | `mobile.host` / `mobile.port` | 同名 | 手机监听地址与端口 | 默认 `0.0.0.0:8528`；可绑定指定局域网 IP |
 | `audio.loopback_device_index` / `mic_device_index` | 同名 | 后台自动采集的本机设备编号 | 可选；省略时使用系统默认输出回环/输入设备；设备变化后需重新核对编号 |
+| `audio.system_device_name` | 同名 | macOS 系统声音虚拟输入的首选名称 | 默认 `BlackHole 2ch`；Windows 忽略此字段 |
+| `audio.mic_device_name` | 同名 | macOS 麦克风首选名称 | 空字符串使用系统默认输入；Windows 忽略此字段 |
 | `merge.wait_ms` | `merge.wait_ms` | `server.py`；题目分段等待时间 | 保持整数毫秒 |
 | `merge.continuation_ms` | `merge.continuation_ms` | `server.py`；已出题后的续段合并窗口 | `0` 表示关闭 |
 | `stt.url` | `stt.url` | `server.py` → `AudioEngine`；STT base URL | 当前应用使用键名 `url`，不要改成 `base_url`；localhost 示例保留 `/v1` |
@@ -127,6 +131,7 @@ python server.py
 - `启动面试辅助.bat` 和 `后台手机模式.bat` 使用 `scripts/launch.ps1`，读取配置端口并检查主服务身份和就绪状态。STT URL 为本机时，无论主服务是否已运行，都会检查 STT `/models`；不可用时按环境变量 `INTERVIEW_COPILOT_STT_DIR` 或 `stt.server_dir` 启动已有服务并等待 API 就绪。目录未配置时需自行启动 STT；STT 未就绪时电脑模式提示仍可手动提问，手机模式会拒绝自动采集。
 - STT 的 `localhost`、`127.0.0.0/8` 和 `::1` 请求绕过环境与 Windows 系统代理，防止本机服务被代理成 502；远端 STT 继续保留原代理策略。启动器管理本机服务的 HTTP 请求也直接访问回环。`/models` 可用只证明 API 已启动，不代表模型已完成加载或真实转写验收。
 - `stt.url` 是应用配置键，而 `STTClient` 构造参数内部叫 `base_url`。这是现有适配关系，不是两个都要配置。
+- macOS 设备列表来自 CoreAudio。系统声音选择器只显示 BlackHole、Loopback、Background Music、Soundflower 或名称包含 virtual 的输入；普通麦克风仍显示在麦克风选择器中。
 
 ## Obsidian 与本地笔记
 

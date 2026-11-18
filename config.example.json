@@ -48,6 +48,8 @@
     "fallback_api_key_env": ["LLM_FALLBACK_API_KEY"]
   },
   "audio": {
+    "system_device_name": "BlackHole 2ch",
+    "mic_device_name": "",
     "sample_rate": 16000,
     "frame_ms": 100,
     "silence_end_ms": 900,

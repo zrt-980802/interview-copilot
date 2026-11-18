@@ -1,6 +1,6 @@
 # Interview Copilot
 
-A Windows-first local interview copilot prototype. It captures system loopback and microphone audio, transcribes speech through an OpenAI-compatible STT endpoint, and streams structured answer cards to a local browser interface.
+A Windows and macOS local interview copilot prototype. It captures system and microphone audio, transcribes speech through an OpenAI-compatible STT endpoint, and streams structured answer cards to a local browser interface.
 
 > Status: early private prototype under active v2 restructuring. Do not treat the current legacy implementation as a stable release.
 
@@ -8,6 +8,7 @@ A Windows-first local interview copilot prototype. It captures system loopback a
 
 - FastAPI backend with SSE events
 - Windows WASAPI capture through PyAudioWPatch
+- macOS CoreAudio capture through sounddevice; system audio uses a virtual input such as BlackHole
 - OpenAI-compatible STT client
 - Configurable OpenAI-compatible LLM provider
 - Local SQLite interview history
@@ -29,7 +30,9 @@ Copy `config.example.json` to `config.json` and fill in your own local settings.
 
 ## Run locally
 
-Install the project dependencies into the existing environment, including the audio and PDF extras:
+Install the project dependencies into the existing environment, including the audio and PDF extras.
+
+Windows:
 
 ```powershell
 .\venv\Scripts\python.exe -m pip install -e '.[audio,pdf]'
@@ -37,6 +40,8 @@ Install the project dependencies into the existing environment, including the au
 ```
 
 The desktop workspace defaults to `http://127.0.0.1:8527`. Opening the page does not start recording; use the listen control. `启动面试辅助.bat` checks service readiness and opens the workspace.
+
+macOS requires Python 3.11 or newer. Install and route BlackHole first, then double-click `run_macos.command`; the launcher creates `.venv` when needed, installs platform dependencies, creates `config.json` from the public example when missing, starts the service, and opens the workspace. See [macOS setup](docs/macos.md).
 
 For PC capture with phone display, run `后台手机模式.bat`, or `python server.py --mobile --auto-listen`. This starts PC loopback and microphone capture without opening a desktop browser. The launcher prints LAN addresses and a single-use pairing code. The desktop phone control also provides a QR code and revocation. Phone and desktop share the same runtime and active session.
 
@@ -46,7 +51,7 @@ The desktop history control opens `/history` for searchable review, saved source
 
 The library control opens `/files`: keep a current resume alongside multiple reference documents, initialize uploaded files, import specific public GitHub Markdown links, preview text and choose which documents participate in retrieval. See [document library](docs/document-library.md) for supported formats and the boundary between candidate background and reference material.
 
-The settings control opens `/settings` for provider URL, API key, quick/detail models and an optional fallback. It supports model discovery, connection tests, Windows user-scoped encrypted key storage and session-only keys. Saved settings apply to subsequent answers without interrupting an answer already running. Settings are available only on the local desktop listener; see [configuration](docs/configuration.md).
+The settings control opens `/settings` for provider URL, API key, quick/detail models and an optional fallback. It supports model discovery, connection tests, Windows user-scoped encrypted key storage and session-only keys. On macOS, use session-only keys or explicitly configured environment variables until native Keychain storage is implemented. Saved settings apply to subsequent answers without interrupting an answer already running. Settings are available only on the local desktop listener; see [configuration](docs/configuration.md).
 
 The microphone selector includes the system default, available input devices and off. The listen command starts both selected channels; devices can be switched during capture. Candidate speech is kept separate from AI suggestions and passed to follow-up questions and the current question's deep dives.
 
@@ -59,7 +64,7 @@ The existing implementation remains in `server.py`, `copilot/`, and `static/`. A
 
 ## Platform scope
 
-The first supported platform is Windows. The v2 design separates audio-source interfaces so macOS and Linux adapters can be added later.
+Windows and macOS are supported by separate audio adapters while sharing the same service and browser UI. macOS microphone capture is native CoreAudio; system audio requires a virtual CoreAudio input such as BlackHole, Loopback, or Background Music. Linux audio capture is not currently supported.
 
 ## License
 
