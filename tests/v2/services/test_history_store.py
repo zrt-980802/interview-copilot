@@ -19,6 +19,27 @@ def test_construction_does_no_io_and_close_before_start_is_safe(tmp_path):
         store.start()
 
 
+def test_question_revision_replaces_answer_sources_and_details_in_same_turn(tmp_path):
+    store = HistoryStore(tmp_path / "history.db"); store.start()
+    try:
+        sid = store.new_session()
+        tid = store.turn_begin("partial question")
+        document = parse_answer("【开口】old answer","quick",[])
+        store.turn_finish(tid,"old answer",document=document,task_id="old")
+        store.detail_add(tid,"old direction","old detail",document=parse_answer("old detail","detail",[]))
+        store.turn_revise(tid,"complete question with supplement")
+        revised = store.get_session(sid)["turns"]
+        assert len(revised) == 1 and revised[0]["id"] == tid
+        assert revised[0]["question"] == "complete question with supplement"
+        assert revised[0]["quick_card"] is None and revised[0]["details"] == []
+        assert revised[0]["quick_document_status"] == "legacy"
+        assert revised[0]["quick_document"] is None
+        store.turn_finish(tid,"revised answer"); store.flush()
+        assert store.get_session(sid)["turns"][0]["quick_card"] == "revised answer"
+    finally:
+        store.close()
+
+
 def test_flush_close_and_reopen_preserve_accepted_writes(tmp_path):
     path = tmp_path / "history.db"
     store = HistoryStore(path)

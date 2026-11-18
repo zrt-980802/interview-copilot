@@ -13,6 +13,7 @@ import zipfile
 from xml.etree import ElementTree
 
 from interview_copilot.services.corpus import passages
+from interview_copilot.services.html_text import visible_text
 
 
 KINDS = {"resume", "candidate", "paper", "reference", "jd"}
@@ -37,13 +38,17 @@ def extract_document(path):
             raise DocumentError("PDF 已加密，请先解密后上传")
         if len(reader.pages) > 250:
             raise DocumentError("PDF 超过 250 页，请拆分后上传")
-        parts, size = [], 0
-        for page in reader.pages:
-            part = page.extract_text() or ""
+        parts, size, content_chars = [], 0, 0
+        for number, page in enumerate(reader.pages, 1):
+            content = page.extract_text() or ""
+            content_chars += len(re.findall(r"\w",content))
+            part = f"## 第 {number} 页\n" + content
             size += len(part) + 1
             if size > MAX_CHARS:
                 raise DocumentError("提取文本超过 200 万字符，请拆分后上传")
             parts.append(part)
+        if content_chars < 8:
+            raise DocumentError("可提取正文过少；扫描件需先完成 OCR")
         text = "\n".join(parts)
     elif path.suffix.lower() == ".docx":
         with zipfile.ZipFile(path) as archive:
@@ -68,6 +73,8 @@ def extract_document(path):
                 text = raw.decode("gb18030")
             except UnicodeError as exc:
                 raise DocumentError("文本编码无法识别，请转换为 UTF-8 后上传") from exc
+    if path.suffix.lower() == ".html":
+        text = visible_text(text)
     text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
     if len(text) > MAX_CHARS:
         raise DocumentError("提取文本超过 200 万字符，请拆分后上传")
@@ -107,6 +114,10 @@ class DocumentLibrary:
                 CREATE INDEX IF NOT EXISTS idx_documents_hash ON documents(sha256);""")
             if "source_url" not in {row[1] for row in conn.execute("PRAGMA table_info(documents)")}:
                 conn.execute("ALTER TABLE documents ADD COLUMN source_url TEXT NOT NULL DEFAULT ''")
+            version = conn.execute("SELECT value FROM settings WHERE key='text_extractor_version'").fetchone()
+            if not version or version[0] != '2':
+                conn.execute("UPDATE documents SET status='queued' WHERE status='ready' AND extension IN ('.pdf','.html')")
+                conn.execute("INSERT OR REPLACE INTO settings VALUES('text_extractor_version','2')")
             conn.execute("UPDATE documents SET status='queued',error='' WHERE status IN ('parsing','indexing')")
             # FTS is process-local. Rebuild it from persisted parsed text before accepting questions.
             for row in conn.execute("SELECT * FROM documents WHERE status='ready'").fetchall():
@@ -307,6 +318,19 @@ class DocumentLibrary:
         with self._lock, closing(self._conn()) as conn:
             row = self._row(conn, identity)
             return self._original_path(row), row["name"]
+
+    def source(self, identity, start=1, end=80):
+        if type(start) is not int or type(end) is not int or start < 1 or end < start or end - start > 200:
+            raise DocumentError("原文范围须为连续的 1 至 201 行")
+        with self._lock, closing(self._conn()) as conn:
+            row = self._row(conn, identity)
+            if row["status"] != "ready":
+                raise DocumentError("正文尚未就绪")
+            lines = self._text_path(identity).read_text(encoding="utf-8").splitlines()
+            if start > len(lines):
+                raise DocumentError("原文行号超出范围")
+            return {"text":"\n".join(lines[start - 1:end]), "lines":[start,min(end,len(lines))],
+                    "total_lines":len(lines)}
 
     def close(self):
         with self._lock:

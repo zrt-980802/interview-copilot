@@ -9,7 +9,7 @@ async function request(path, method = 'GET') {
 }
 function show(value) {
   enabled = value.enabled;
-  $('phoneState').textContent = enabled ? `手机端口已开启 · 已配对 ${value.devices} 台` : '手机端口未开启';
+  $('phoneState').textContent = enabled ? `${value.local_only ? '仅本机预览' : '手机端口已开启'} · ${value.port} · 已配对 ${value.devices} 台` : '手机端口未开启';
   $('phoneNewCode').disabled = !enabled; $('phoneRevoke').disabled = !enabled;
   const selected = $('phoneAddress').selectedIndex;
   $('phoneAddress').replaceChildren(...value.urls.map(url => {
@@ -23,7 +23,7 @@ function show(value) {
     code = value.code; updateQR();
   }
   $('phoneHint').textContent = enabled
-    ? value.urls.length ? '手机与电脑需连接同一可互通的局域网' : '未检测到局域网地址，请检查网络连接'
+    ? value.local_only ? '此端口仅供电脑浏览器预览，手机无法通过局域网连接' : value.urls.length ? '手机与电脑需连接同一可互通的局域网' : '未检测到局域网地址，请检查网络连接'
     : '使用“后台手机模式.bat”启动，或运行 python server.py --mobile';
 }
 function updateQR() {

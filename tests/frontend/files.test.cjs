@@ -26,12 +26,46 @@ function record(overrides = {}) {
     overview:'PostgreSQL 查询计划与索引适用范围。',preview:'PostgreSQL 查询计划与索引适用范围。',source_url:'',...overrides};
 }
 
+for (const viewport of [{width:1365,height:900},{width:390,height:844}]) {
+  test(`facts preserve sources and allow reversible review at ${viewport.width}px`,{skip},async t => {
+    const {page,errors} = await fixture(t,viewport);
+    const fact = {id:'fact-one',subject:'图谱项目',field:'action',value:'完成多源实体链接。',quote:'完成多源实体链接。',
+      lines:[4,4],state:'needs_confirmation',review:'auto'};
+    const value = () => record({knowledge:{status:'ready',summary:'整理图谱项目。',facts:[fact],projects:[{name:'图谱项目',fact_ids:[fact.id]}],semantic:{status:'ready'}}});
+    await page.route('**/api/files',route => route.fulfill({json:{files:[value()],legacy:[],resume_mode:'managed'}}));
+    await page.route('**/api/files/' + identity,route => route.fulfill({json:{file:value()}}));
+    await page.route(`**/api/files/${identity}/source?*`,route => route.fulfill({json:{text:'项目说明\n完成多源实体链接。\n结果待测',lines:[3,5],total_lines:5}}));
+    await page.route(`**/api/files/${identity}/facts/${fact.id}`,route => {
+      fact.review = route.request().postDataJSON().decision;
+      fact.state = {confirm:'confirmed',reject:'excluded',auto:'needs_confirmation'}[fact.review];
+      return route.fulfill({json:{ok:true}});
+    });
+    await page.goto(base + '/files?file=' + identity);
+    await page.getByRole('button',{name:'事实与项目',exact:true}).click();
+    await page.locator('.fact-status').filter({hasText:'待确认'}).waitFor();
+    await page.getByRole('button',{name:'原文',exact:true}).click();
+    await page.locator('#sourceText').filter({hasText:'L4  完成多源实体链接。'}).waitFor();
+    await page.getByRole('button',{name:'关闭原文',exact:true}).click();
+    await page.getByRole('button',{name:'确认本人事实',exact:true}).click();
+    await page.locator('.fact-status').filter({hasText:'已确认'}).waitFor();
+    await page.getByRole('button',{name:'排除',exact:true}).click();
+    await page.locator('.fact-status').filter({hasText:'已排除'}).waitFor();
+    await page.getByRole('button',{name:'撤销核对',exact:true}).click();
+    await page.locator('.fact-status').filter({hasText:'待确认'}).waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),true);
+    assert.equal(await page.locator('.fact-record').evaluate(element => element.scrollWidth <= element.clientWidth),true);
+    await screenshot(page,`knowledge-review-${viewport.width}`);
+    assert.deepEqual(errors,[]);
+  });
+}
+
 test('files batch upload initializes reference documents, previews, renames, switches scope and archives', {skip}, async t => {
   const {page,request,errors} = await fixture(t);
   await page.goto(base + '/files');
   const name = 'browser-reference-' + Date.now() + '.md';
+  const text = '# PostgreSQL\nEXPLAIN ANALYZE executes queries and returns actual plan statistics.\n' + name;
   await page.locator('#fileInput').setInputFiles([
-    file(name,'# PostgreSQL\nEXPLAIN ANALYZE executes queries and returns actual plan statistics.'),
+    file(name,text),
     file('browser-reference-redis.txt','Redis documentation about expiry and cache consistency, used as reference.'),
     file('unsupported.exe','invalid format')]);
   await page.locator('#notice').filter({hasText:'不支持'}).waitFor();
@@ -55,13 +89,50 @@ test('files batch upload initializes reference documents, previews, renames, swi
   await page.getByRole('button',{name:'全部',exact:true}).click();
   await page.locator(`[data-file-id="${id}"]`).waitFor();
   assert.equal(await checkbox.isChecked(),false);
-  await page.locator('#fileInput').setInputFiles(file(name,'# PostgreSQL\nEXPLAIN ANALYZE executes queries and returns actual plan statistics.'));
+  await page.locator('#fileInput').setInputFiles(file(name,text));
   await page.locator('#notice').filter({hasText:'1 份已存在'}).waitFor();
   await page.reload();
   await page.locator('#detailName').filter({hasText:name}).waitFor();
   assert.match(await page.locator('#initialization').textContent(),/可以参考/);
   await screenshot(page,'files-reference-desktop');
   if (phone) assert.equal((await request.get(phone + '/api/files')).status(),404);
+  assert.deepEqual(errors,[]);
+});
+
+test('files wait for a pending save before archiving and recover controls after an error', {skip}, async t => {
+  const {page,errors} = await fixture(t);
+  let value = record(), started, release, patches = 0;
+  const pending = new Promise(resolve => { started = resolve; });
+  const held = new Promise(resolve => { release = resolve; });
+  t.after(() => release());
+  await page.route('**/api/files',route => route.fulfill({json:{files:[value],legacy:[],resume_mode:'legacy'}}));
+  await page.route('**/api/files/' + identity,async route => {
+    if (route.request().method() === 'PATCH') {
+      const changes = route.request().postDataJSON(); patches++;
+      if (patches === 1) { started(); await held; }
+      if (patches === 3) return route.fulfill({status:503,json:{error:'合成保存失败，请重试'}});
+      value = {...value,...changes};
+    }
+    return route.fulfill({json:{file:value}});
+  });
+  await page.goto(base + '/files?file=' + identity);
+  await page.locator('#fileDetail:not([hidden])').waitFor();
+  await page.locator(`[data-file-id="${identity}"] input`).uncheck();
+  await pending;
+  assert.equal(await page.locator('#fileDetail').getAttribute('aria-busy'),'true');
+  assert.equal(await page.locator(`[data-file-id="${identity}"] input`).isChecked(),false);
+  for (const id of ['archive','retry','save','fileTitle','fileKind']) assert.equal(await page.locator('#' + id).isDisabled(),true,id);
+  const archive = page.getByRole('button',{name:'归档文件'}).click();
+  release(); await archive;
+  await page.locator('#notice').filter({hasText:'文件已归档'}).waitFor();
+  await page.getByRole('button',{name:'已归档',exact:true}).click();
+  await page.locator(`[data-file-id="${identity}"]`).waitFor();
+  await page.getByRole('button',{name:'恢复文件'}).click();
+  await page.locator('#notice').filter({hasText:'合成保存失败'}).waitFor();
+  await page.locator('#archive:not([disabled])').waitFor();
+  assert.equal(await page.locator('#fileDetail').getAttribute('aria-busy'),'false');
+  assert.equal(await page.locator('#save').isDisabled(),true);
+  assert.equal(patches,3);
   assert.deepEqual(errors,[]);
 });
 

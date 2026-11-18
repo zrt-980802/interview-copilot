@@ -22,6 +22,7 @@ import queue
 import threading
 import time
 import wave
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, wait
 
 import numpy as np
@@ -29,6 +30,7 @@ import numpy as np
 import pyaudiowpatch as pw
 
 from copilot.hotwords import build_hotwords  # noqa: E402
+from interview_copilot.services.question_flow import is_repetitive_text
 from copilot.stt import STTClient  # noqa: E402
 
 
@@ -196,6 +198,10 @@ def list_output_devices():
     """列出所有 WASAPI loopback 设备。"""
     def _list():
         out = []
+        try:
+            default_index = _PA.get_default_wasapi_loopback()["index"]
+        except Exception:
+            default_index = None
         for d in _PA.get_loopback_device_info_generator():
             out.append({
                 "index": d["index"],
@@ -203,6 +209,7 @@ def list_output_devices():
                 "hostapi": "WASAPI-loopback",
                 "rate": int(d.get("defaultSampleRate") or 48000),
                 "channels": int(d.get("maxInputChannels") or 2),
+                "is_default": d["index"] == default_index,
             })
         return out
     try:
@@ -211,12 +218,23 @@ def list_output_devices():
         return []
 
 
+def _default_input_info():
+    try:
+        return _PA.get_default_wasapi_device(d_in=True)
+    except Exception:
+        return _PA.get_default_input_device_info()
+
+
 def list_input_devices():
     """列出普通(非回环)输入设备，即麦克风。
     同一物理设备会被 MME/DirectSound/WASAPI 各暴露一次 → 按名称去重，优先 WASAPI；
     过滤'声音映射器/主声音捕获'等虚拟设备。"""
     def _list():
         seen: dict = {}
+        try:
+            default_index = _default_input_info()["index"]
+        except Exception:
+            default_index = None
         for idx in range(_PA.get_device_count()):
             info = _PA.get_device_info_by_index(idx)
             try:
@@ -234,6 +252,7 @@ def list_input_devices():
                     "hostapi": api,
                     "rate": int(info.get("defaultSampleRate") or 48000),
                     "channels": int(info.get("maxInputChannels") or 1),
+                    "is_default": idx == default_index,
                 }
                 prev = seen.get(name)
                 if prev is None:
@@ -264,7 +283,7 @@ def _default_loopback():
 
 def _default_input():
     def _get():
-        info = _PA.get_default_input_device_info()
+        info = _default_input_info()
         return {"index": int(info["index"]), "name": str(info["name"]),
                 "rate": int(info.get("defaultSampleRate") or 48000)}
     try:
@@ -575,12 +594,14 @@ class AudioEngine:
         calib_deadline = calib_start + 2.0
         last_voice_wall = [None]
         capture_generation = self.generation
+        pre_roll = deque(maxlen=max(1,int(self.audio_config.get("pre_roll_ms",300)) // frame_ms))
 
         def flush(force=False):
             nonlocal ring, ring_ms, speech_frames, silence_frames
             seg_bytes = b"".join(ring)
             dur = ring_ms
             ring, ring_ms, speech_frames, silence_frames = [], 0, 0, 0
+            pre_roll.clear()
             if not self._stop_flag.is_set() and seg_bytes and (force or dur >= min_segment_ms):
                 with self._segment_lock:
                     self._segment_seq += 1
@@ -595,10 +616,16 @@ class AudioEngine:
             is_speech = lvl >= max(self.speech_enter_db, abs_floor)
             if is_speech:
                 silence_frames = 0
+                if speech_frames == 0 and pre_roll:
+                    ring.extend(pre_roll)
+                    ring_ms += len(pre_roll) * frame_ms
+                    pre_roll.clear()
                 speech_frames += 1
                 last_voice_wall[0] = time.time()
             else:
                 silence_frames += 1
+                if speech_frames == 0:
+                    pre_roll.append(chunk16k.astype(np.float32).tobytes())
 
             if speech_frames > 0 and silence_frames <= speech_frames:
                 ring.append(chunk16k.astype(np.float32).tobytes())
@@ -653,6 +680,7 @@ class AudioEngine:
                     pending = np.zeros(0, dtype=np.float32)
                     ring, ring_ms, speech_frames, silence_frames = [], 0, 0, 0
                     last_voice_wall[0] = None
+                    pre_roll.clear()
                     calib_frames.clear()
                     while True:
                         try:
@@ -712,9 +740,7 @@ class AudioEngine:
         if self._hotword_ctx:
             r_, j_, pt_ = self._hotword_ctx
             prompt = build_hotwords(resume_text=r_, jd_text=j_,
-                                    paper_titles=pt_,
-                                    base="后端面试可能出现的术语：MySQL 索引 "
-                                         "事务 Redis 缓存 Kafka 高并发 分布式")
+                                    paper_titles=pt_)
         segment_generation = self.generation if segment_generation is None else segment_generation
         for attempt in range(3):
             if self._stop_flag.is_set() or segment_generation != self._generation:
@@ -724,11 +750,17 @@ class AudioEngine:
                 if self._stop_flag.is_set() or segment_generation != self._generation:
                     return
                 if text:
+                    if is_repetitive_text(text):
+                        self.stats["rejected_repetition"] = self.stats.get("rejected_repetition",0) + 1
+                        self.status_cb(type="stt_rejected",reason="repetition",text=text[:320],speaker=self.speaker_tag)
+                        return
                     self.stats["segments"] += 1
                     self.status_cb(type="question", text=text,
                                    at=time.strftime("%H:%M:%S"),
                                    segment_seq=segment_seq,
                                    input_generation=segment_generation,
+                                   duration_ms=round(len(samples) * 1000 / self.sample_rate),
+                                   level_db=round(dbfs(samples),1),
                                    speaker=self.speaker_tag)
                 return
             except Exception as e:

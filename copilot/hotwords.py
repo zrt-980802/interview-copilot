@@ -57,6 +57,9 @@ def build_hotwords(resume_text: str = "", jd_text: str = "",
     for w in zh_words.split():
         add_word(w)
 
-    if not parts:
-        return ""
-    return "后端面试可能出现的术语：" + " ".join(parts[:60])
+    selected, used = [],len("术语：")
+    for word in parts[:32]:
+        if used + len(word) + 1 > 224:
+            break
+        selected.append(word); used += len(word) + 1
+    return "术语：" + " ".join(selected) if selected else ""

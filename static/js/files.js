@@ -1,9 +1,12 @@
 const $ = id => document.getElementById(id);
 const names = {reference:'参考资料',resume:'简历',candidate:'本人项目资料',paper:'论文',jd:'岗位说明'};
 const statuses = {queued:'等待初始化',parsing:'解析正文',indexing:'建立索引',ready:'已就绪',error:'处理失败'};
+const analysisNames = {idle:'待分析',queued:'等待分析',analyzing:'正在分析',ready:'分析完成',error:'分析失败'};
+const factNames = {source_supported:'资料陈述',confirmed:'已确认',reference:'仅供参考',planned:'计划或预计',needs_confirmation:'待确认',conflict:'存在冲突',excluded:'已排除'};
+const fieldNames = {name:'名称',role:'角色',action:'做法',technology:'技术',result:'结果',period:'时间',graduation_date:'毕业时间',education_status:'学业状态',publication_status:'发表状态'};
 const processing = file => ['queued','parsing','indexing'].includes(file.status);
 let files = [], selected, current, view = 'all', contentView = 'overview', legacy = [], resumeMode;
-let listSequence = 0, detailSequence = 0, detailController, dirty = false, saving = false;
+let listSequence = 0, detailSequence = 0, detailController, dirty = false, saving = false, pendingEnabled;
 const node = (tag, cls, text) => {
   const element = document.createElement(tag); element.className = cls || '';
   if (text !== undefined) element.textContent = text;
@@ -32,7 +35,9 @@ function renderRows() {
     description.append(select,node('div','file-original',file.name),node('div','file-size',size(file.bytes)));
     label.append(symbol(file.source_url ? 'github' : 'file-text'),description); cell.append(label);
     const state = node('td','status-' + file.status,file.archived ? '已归档' : statuses[file.status] || file.status);
-    const enabled = node('td','enable-cell'), checkbox = node('input'); checkbox.type = 'checkbox'; checkbox.checked = file.enabled;
+    if (!file.archived && file.knowledge) state.append(node('div','analysis-label',file.knowledge.conflicts ? `${file.knowledge.conflicts} 项待核对` : analysisNames[file.knowledge.status]));
+    const enabled = node('td','enable-cell'), checkbox = node('input'); checkbox.type = 'checkbox';
+    checkbox.checked = pendingEnabled?.id === file.id ? pendingEnabled.value : file.enabled;
     checkbox.setAttribute('aria-label',`启用 ${file.name}`); checkbox.disabled = file.archived || file.status !== 'ready' || saving;
     checkbox.onchange = () => mutate(file.id,{enabled:checkbox.checked}); enabled.append(checkbox);
     row.append(cell,node('td','kind-col',names[file.kind]),state,enabled); return row;
@@ -75,8 +80,18 @@ function preview() {
   if (!current) return;
   $('overviewTab').setAttribute('aria-pressed',String(contentView === 'overview'));
   $('textTab').setAttribute('aria-pressed',String(contentView === 'text'));
-  $('preview').textContent = contentView === 'text' ? current.preview || '暂无正文' : current.overview || '等待正文解析';
-  $('textCount').textContent = `${current.chars} 字 · ${current.chunks} 段${contentView === 'text' && current.preview_truncated ? ' · 正文节选' : ''}`;
+  $('knowledgeTab').setAttribute('aria-pressed',String(contentView === 'knowledge'));
+  $('knowledgePanel').hidden = contentView !== 'knowledge'; $('preview').hidden = contentView === 'knowledge';
+  $('preview').textContent = contentView === 'text' ? current.preview || '暂无正文' : current.knowledge?.summary || current.overview || '等待正文解析';
+  $('textCount').textContent = contentView === 'knowledge' ? `${current.knowledge?.facts?.length || 0} 条记录 · ${current.knowledge?.projects?.length || 0} 个项目或研究主题`
+    : contentView === 'overview' && current.knowledge?.summary ? `AI 摘要${current.knowledge.partial ? ' · 部分资料' : ''}` : `${current.chars} 字 · ${current.chunks} 段${contentView === 'text' && current.preview_truncated ? ' · 正文节选' : ''}`;
+}
+function renderDetailControls() {
+  $('fileDetail').setAttribute('aria-busy',String(saving));
+  $('archive').disabled = $('retry').disabled = saving;
+  $('analyze').disabled = saving || !current || current.archived || !current.enabled || current.status !== 'ready' || ['queued','analyzing'].includes(current.knowledge?.status);
+  for (const button of $('knowledgePanel').querySelectorAll('button[data-review]')) button.disabled = saving || !!current?.archived;
+  for (const input of $('fileProperties').elements) input.disabled = !!current?.archived || saving;
 }
 function renderDetail(file) {
   current = file; $('fileDetail').hidden = false; $('detailEmpty').hidden = true; $('detailState').textContent = '';
@@ -84,7 +99,7 @@ function renderDetail(file) {
   $('fileMeta').textContent = `${size(file.bytes)} · ${file.created_at} · ${file.archived ? '已归档' : statuses[file.status]}`;
   $('download').href = `/api/files/${file.id}/download`;
   $('archive').title = $('archive').ariaLabel = file.archived ? '恢复文件' : '归档文件';
-  $('archive').replaceChildren(symbol(file.archived ? 'archive-restore' : 'archive'));
+  $('archive').replaceChildren(symbol(file.archived ? 'archive-restore' : 'archive'),node('span','',file.archived ? '恢复文件' : '归档文件'));
   $('sourceLink').hidden = !file.source_url;
   if (file.source_url) { $('sourceLink').href = file.source_url; $('sourceLink').textContent = file.source_url; }
   const completed = file.status === 'ready';
@@ -97,8 +112,66 @@ function renderDetail(file) {
   $('fileError').hidden = !file.error; $('fileError').textContent = file.error;
   $('retry').hidden = file.status !== 'error' || file.archived;
   if (!dirty) { $('fileTitle').value = file.title; $('fileKind').value = file.kind; }
-  for (const input of $('fileProperties').elements) input.disabled = file.archived || saving;
+  renderKnowledge(file);
+  renderDetailControls();
   preview(); icons();
+}
+function renderKnowledge(file) {
+  const knowledge = file.knowledge || {status:'idle'}, facts = knowledge.facts || [];
+  const semantic = knowledge.semantic || {};
+  const semanticLabel = {ready:'语义索引已就绪',indexing:'语义索引构建中',error:'语义索引不可用',disabled:'语义索引未启用',idle:'语义索引待建立'}[semantic.status] || '';
+  $('knowledgeState').textContent = [analysisNames[knowledge.status] || '待分析',semanticLabel].filter(Boolean).join(' · ');
+  $('analyze').replaceChildren(symbol('scan-text'),node('span','',knowledge.status === 'ready' ? '重新分析' : '分析资料'));
+  const content = [];
+  if (knowledge.error) content.push(node('p','knowledge-error',knowledge.error));
+  if (semantic.error) content.push(node('p','knowledge-error',semantic.error));
+  if (knowledge.partial) content.push(node('p','knowledge-warning',`已分析 ${knowledge.analyzed_blocks}/${knowledge.total_blocks} 段，其余正文仍参与检索`));
+  if (knowledge.rejected_quotes) content.push(node('p','knowledge-warning',`${knowledge.rejected_quotes} 条提取结果未通过原文校验`));
+  if (!facts.length) content.push(node('p','knowledge-empty',['queued','analyzing'].includes(knowledge.status) ? '正在整理资料…' : '暂无结构化记录'));
+  const groups = new Map();
+  for (const fact of facts) { if (!groups.has(fact.subject)) groups.set(fact.subject,[]); groups.get(fact.subject).push(fact); }
+  for (const [subject,items] of groups) {
+    const section = node('section','fact-group'); section.append(node('h3','',subject));
+    for (const fact of items) {
+      const row = node('article','fact-record'); row.dataset.factId = fact.id; row.dataset.state = fact.state;
+      const heading = node('div','fact-heading');
+      heading.append(node('span','fact-field',fieldNames[fact.field] || fact.field),node('span','fact-status',factNames[fact.state] || fact.state));
+      row.append(heading,node('p','fact-value',fact.value),node('blockquote','fact-quote',fact.quote));
+      if (fact.alternatives?.length) {
+        const alternatives = node('details','fact-alternatives'); alternatives.append(node('summary','',`${fact.alternatives.length} 条不同记录`));
+        for (const other of fact.alternatives) alternatives.append(node('p','',`${other.value}\n${other.quote}\n${other.source} · L${other.lines.join('-')}`));
+        row.append(alternatives);
+      }
+      const actions = node('div','fact-actions');
+      const source = node('button','command subtle','原文'); source.prepend(symbol('file-search'));
+      source.onclick = () => showSource(file.id,fact.lines); actions.append(source);
+      for (const [decision,label,icon] of [['confirm','确认本人事实','check'],['reject','排除','ban'],['auto','撤销核对','undo-2']]) {
+        if ((decision === 'confirm' && fact.review === 'confirm') || (decision === 'reject' && fact.review === 'reject') || (decision === 'auto' && (!fact.review || fact.review === 'auto'))) continue;
+        const button = node('button','command subtle',label); button.prepend(symbol(icon)); button.dataset.review = decision;
+        button.disabled = file.archived || saving;
+        button.onclick = () => reviewFact(file.id,fact.id,decision); actions.append(button);
+      }
+      row.append(actions); section.append(row);
+    }
+    content.push(section);
+  }
+  $('knowledgePanel').replaceChildren(...content);
+}
+async function showSource(id,lines) {
+  $('sourceTitle').textContent = `原文依据 · L${lines.join('-')}`; $('sourceState').textContent = '读取中…'; $('sourceText').textContent = ''; $('sourceDialog').showModal();
+  try {
+    const value = await api(`/api/files/${id}/source?start=${Math.max(1,lines[0] - 2)}&end=${lines[1] + 2}`);
+    $('sourceText').textContent = value.text.split('\n').map((line,index) => `L${value.lines[0] + index}  ${line}`).join('\n'); $('sourceState').textContent = '';
+  } catch(error) { $('sourceState').textContent = error.message; }
+}
+async function reviewFact(id,factId,decision) {
+  if (saving) return; saving = true; renderDetailControls(); renderRows();
+  try {
+    await api(`/api/files/${id}/facts/${factId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision})});
+    notice(decision === 'confirm' ? '已记录本人确认' : decision === 'reject' ? '已排除该条记录' : '已撤销核对');
+    await load(); if (selected === id) await loadDetail(id,{quiet:true});
+  } catch(error) { notice(error.message,true); }
+  finally { saving = false; renderRows(); if (current) renderDetail(current); }
 }
 async function loadDetail(id,{quiet = false} = {}) {
   detailController?.abort(); detailController = new AbortController(); const request = ++detailSequence;
@@ -117,14 +190,16 @@ async function selectFile(id) {
   await loadDetail(id);
 }
 async function mutate(id,changes) {
-  if (saving) return; saving = true; renderRows();
+  if (saving) return; saving = true;
+  pendingEnabled = typeof changes.enabled === 'boolean' ? {id,value:changes.enabled} : undefined;
+  renderRows(); renderDetailControls();
   try {
     await api('/api/files/' + id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(changes)});
     if (id === selected) dirty = false;
     notice(changes.archived === true ? '文件已归档' : changes.archived === false ? '文件已恢复，暂未启用' : '资料设置已保存');
     await load(); if (id === selected) await loadDetail(id,{quiet:true});
   } catch(error) { notice(error.message,true); }
-  finally { saving = false; renderRows(); if (current) renderDetail(current); }
+  finally { saving = false; pendingEnabled = undefined; renderRows(); if (current) renderDetail(current); }
 }
 $('upload').onclick = () => { $('fileInput').multiple = $('uploadKind').value !== 'resume'; $('fileInput').click(); };
 $('fileInput').onchange = async () => {
@@ -151,12 +226,21 @@ $('fileTitle').oninput = $('fileKind').onchange = () => { dirty = true; };
 $('fileProperties').onsubmit = event => { event.preventDefault(); if (selected) mutate(selected,{title:$('fileTitle').value.trim(),kind:$('fileKind').value}); };
 $('archive').onclick = () => current && mutate(current.id,{archived:!current.archived});
 $('retry').onclick = async () => {
-  if (!current) return; $('retry').disabled = true;
+  if (!current || saving) return; saving = true; renderRows(); renderDetailControls();
   try { await api(`/api/files/${current.id}/retry`,{method:'POST'}); notice('已重新加入初始化队列'); await load(); }
-  catch(error) { notice(error.message,true); } finally { $('retry').disabled = false; }
+  catch(error) { notice(error.message,true); }
+  finally { saving = false; renderRows(); renderDetailControls(); }
 };
 $('overviewTab').onclick = () => { contentView = 'overview'; preview(); };
 $('textTab').onclick = () => { contentView = 'text'; preview(); };
+$('knowledgeTab').onclick = () => { contentView = 'knowledge'; preview(); };
+$('closeSource').onclick = () => $('sourceDialog').close();
+$('analyze').onclick = async () => {
+  if (!current || saving) return; const id = current.id; saving = true; renderDetailControls(); renderRows();
+  try { await api(`/api/files/${id}/analyze`,{method:'POST'}); notice('已加入资料分析队列'); await load(); if (selected === id) await loadDetail(id,{quiet:true}); }
+  catch(error) { notice(error.message,true); }
+  finally { saving = false; renderRows(); renderDetailControls(); }
+};
 $('backToFiles').onclick = () => {
   detailController?.abort(); ++detailSequence; selected = undefined; current = undefined; dirty = false;
   document.body.classList.remove('inspecting'); renderRows();

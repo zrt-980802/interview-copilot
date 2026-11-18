@@ -91,6 +91,15 @@ class SessionState:
             )
         self._history.append(item)
 
+    def revise_active_turn(self, turn_id: TurnId, question: str) -> int:
+        if turn_id != self._active_turn_id:
+            raise ValueError("only the active turn can be revised")
+        self._generation += 1
+        self._history = [Question(item.session_id,item.turn_id,question,item.source_segments)
+                         if item.turn_id == turn_id else item for item in self._history]
+        self._current_answer = None
+        return self._generation
+
     def set_current_answer(self, text: str | None) -> None:
         if text is not None and not isinstance(text, str):
             raise ValueError(

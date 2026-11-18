@@ -7,7 +7,7 @@
 - 不要把真实 API key 写入 JSON。`api_key_env` 和 `fallback_api_key_env` 保存的是**环境变量名称**，不是密钥值。
 - `resume_path`、`paper_paths`、`material_paths` 在公开模板中保持为空。只在本地 `config.json` 中填写自己的路径。
 - 模板中的 `api.example.invalid` 和模型名都是不可用的保留占位值，必须在本地替换为用户自己选择的 OpenAI-compatible provider 和模型。
-- localhost STT 示例假设本机已有兼容 `/audio/transcriptions` 的服务；仓库不会替用户启动或配置该服务。
+- localhost STT 需要本机独立的兼容 `/audio/transcriptions` 服务；启动器可按 `stt.server_dir` 或 `INTERVIEW_COPILOT_STT_DIR` 启动既有的 `stt_server.py`，不会安装或下载 STT 模型。
 - 不要提交 `.env`、`config.json`、`*.local.json`，也不要把配置或私有材料复制进 `docs/`。
 
 ## 创建本地配置
@@ -65,6 +65,7 @@ copy config.example.json config.json
 | `merge.continuation_ms` | `merge.continuation_ms` | `server.py`；已出题后的续段合并窗口 | `0` 表示关闭 |
 | `stt.url` | `stt.url` | `server.py` → `AudioEngine`；STT base URL | 当前应用使用键名 `url`，不要改成 `base_url`；localhost 示例保留 `/v1` |
 | `stt.model` | `stt.model` | `server.py` → `STTClient`；转写模型 | 使用 STT 服务实际支持的模型名 |
+| `stt.server_dir` | 同名 | `scripts/launch.ps1`；可选的本地 STT 项目目录 | 包含 `stt_server.py` 和 `venv/Scripts/python.exe`；环境变量 `INTERVIEW_COPILOT_STT_DIR` 优先，仅在 STT URL 为回环地址时用于自启 |
 | `stt.api_key_env` | `stt.api_key_env` | `server.py` → `STTClient`；依次查找密钥 | 填环境变量名数组；本地无鉴权 STT 可用空数组 |
 | `llm.base_url` | `llm.base_url` | `copilot/llm.py`；主 OpenAI-compatible endpoint | 将模板占位 URL 替换为自己的 provider URL |
 | `llm.quick_model` | `llm.quick_model` | `copilot/llm.py`；快速回答模型 | 填 provider 实际模型标识；为空时进入通用模型回退逻辑 |
@@ -94,7 +95,8 @@ copy config.example.json config.json
 | --- | --- | --- |
 | `stt.api_key` | 不迁入公开模板；将真实值移到用户显式设置的环境变量，并把变量名写入 `stt.api_key_env` | 当前 legacy 接口兼容内联值，但公开配置必须避免明文 key |
 | `stt.timeout` | 暂不迁移 | 通用 `STTClient` 能读取该键，但当前应用从 `server.py` 创建 `AudioEngine` 时没有传递它，实际 HTTP timeout 仍由实现内部固定 |
-| `audio.merge_quiet_ms` | 删除 | 当前源码没有读取该字段；题目合并使用 `merge.wait_ms` 和 `merge.continuation_ms` |
+| `audio.merge_quiet_ms` | 删除 | 当前源码没有读取该字段；题目合并使用 `merge.wait_ms`、`merge.smart_continuation_ms` 和 `merge.incomplete_wait_ms` |
+| `merge.continuation_ms` | 已弃用，不再读取 | 旧版时间窗口内无条件拼接会串题；新版只在内容提示属于补充时使用 `merge.smart_continuation_ms` |
 | 其他未知字段 | 暂时保留在私有备份，不直接带入 v2 | 先确认读取方和类型，避免把历史私有值或失效开关扩散到新配置 |
 
 ## 环境变量规则
@@ -122,7 +124,8 @@ python server.py
 ## 当前兼容性注意事项
 
 - 当前 `server.py` 在 lifespan 启动时读取配置并装配资源，导入模块不启动采集或打开数据库。缺失必需配置仍会使启动失败。
-- `启动面试辅助.bat` 和 `后台手机模式.bat` 使用 `scripts/launch.ps1`，读取配置中的端口并检查 `/api/health` 的服务标识与就绪状态。设置了 `INTERVIEW_COPILOT_STT_DIR` 且 STT URL 为本机时，可启动该目录的 `stt_server.py` 并等待 `/models`；未配置时需自行启动 STT。
+- `启动面试辅助.bat` 和 `后台手机模式.bat` 使用 `scripts/launch.ps1`，读取配置端口并检查主服务身份和就绪状态。STT URL 为本机时，无论主服务是否已运行，都会检查 STT `/models`；不可用时按环境变量 `INTERVIEW_COPILOT_STT_DIR` 或 `stt.server_dir` 启动已有服务并等待 API 就绪。目录未配置时需自行启动 STT；STT 未就绪时电脑模式提示仍可手动提问，手机模式会拒绝自动采集。
+- STT 的 `localhost`、`127.0.0.0/8` 和 `::1` 请求绕过环境与 Windows 系统代理，防止本机服务被代理成 502；远端 STT 继续保留原代理策略。启动器管理本机服务的 HTTP 请求也直接访问回环。`/models` 可用只证明 API 已启动，不代表模型已完成加载或真实转写验收。
 - `stt.url` 是应用配置键，而 `STTClient` 构造参数内部叫 `base_url`。这是现有适配关系，不是两个都要配置。
 
 ## Obsidian 与本地笔记
@@ -165,3 +168,24 @@ M3-4 增加 Answer Document v1，接口和事实检查语义见 [结构说明](a
 M4-1 增加 `qrcode` 依赖和本地 Lucide 图标。普通桌面启动不自动采集；`--auto-listen` 在服务 lifespan 中启动电脑的两个音频通道，不依赖页面。手机监听器只提供显示、配对和退出配对，不共享电脑的完整静态目录、管理 API 或背景材料快照。具体配置、配对有效期和验证范围见 [手机显示说明](mobile-display.md)。
 
 M4-3 增加电脑 `/files` 资料库，新上传和公开 GitHub Markdown 经本地解析、概览、分块及索引后参与按题检索。原文件、处理状态和开关保存于 `data/documents/`，无需新增配置；PDF 仍使用现有 `pdf` 安装依赖。GitHub 导入遵循进程的代理配置，不使用模型 key 或自动读取仓库 token。已有简历/论文/材料保留原链路，没有自动迁移原文件。类型、限额和验证范围见 [资料库说明](document-library.md)。
+## 资料理解与语义检索
+
+`knowledge.enabled` 默认 `true`：正文就绪后调用当前回答 Provider 生成摘要、事实与项目记录，分段正文会发送给该服务。`knowledge.semantic_enabled` 默认 `true`，`knowledge.semantic_model` 默认为 `BAAI/bge-m3`，也可填写本地 SentenceTransformer 模型目录。
+
+本地语义依赖可通过 `venv\Scripts\python.exe -m pip install -e ".[semantic]"` 安装。模型需提前缓存；启动只加载本机模型，不自动下载。向量在 CPU 上生成并持久化复用，后台预热完成后显示就绪。依赖、模型或推理失败时，资料正文和关键词检索仍可用，详情显示语义索引错误。
+
+关闭结构化分析可设 `knowledge.enabled=false`；只关闭向量检索可设 `knowledge.semantic_enabled=false`。修改这些本地配置后重启服务。卡片核对决定不会因关闭功能而删除，资料目录保持受 Git 忽略保护。
+
+验证工具：`venv\Scripts\python.exe scripts\validate_knowledge.py --retrieval-only`。脚本复用或更新本地向量缓存，不采集音频，不修改核对决定或面试历史；结果默认保存到受忽略保护的 `data/`。去掉该参数会使用当前真实 Provider 对固定问题生成旧/新上下文对照，可能产生 API 费用；可用 `--question-index 4` 聚焦单题。
+
+## 通用作答、语音补充与诊断
+
+通用技术题和方案题允许使用当前模型自身的知识；资料只提供相关依据，通用题不注入整份简历。个人经历仍需资料或本人发言支持，人工核对约束继续保留。回答优先给操作顺序、失败处理及关键取舍，快速层目标 150 至 280 字，复杂题可能更长；这是提示词目标，不是硬截断。
+
+模型可结合最近对话还原近音、漏词和指代，原始转写不会被覆盖。上下文足够明确时直接回答；关键数字、否定词或约束存在多种解释时再澄清。该行为依赖模型判断，不等于转写准确率已提高。
+
+`merge.wait_ms` 默认 1100；疑似未完成句使用 `merge.incomplete_wait_ms`，默认 4000。成题后默认 8000 毫秒内收到有补充线索的片段，取消旧生成，在同一题上合并重答，桌面、手机和历史同步替换；显式换题或候选人已开始实质回答时关闭续接。`merge.smart_continuation_ms=0` 关闭成题后续接。超过窗口的补充可能成为新题，启发式也可能判断错误。
+
+`audio.pre_roll_ms` 默认 300，保留触发语音阈值前的短缓冲，减轻起音截断。纯致谢、试音、咳嗽标注和重复文本不触发自动作答；短模式重复转写记录为 `stt_rejected`。正常转写事件保存片段时长与电平供排查，不默认保存现场音频。
+
+`venv\Scripts\python.exe scripts\validate_stt.py --output data/stt-quality.json` 对已知 WAV、静音、白噪声和低频声进行有/无热词的 10 项真实 STT 对照，不采环境音。默认 WAV 是本机已有的 `data/stt-synthetic-check.wav`，其他机器需通过 `--speech-wav` 与 `--expected` 指定。外部 Whisper 服务的本机解码调整与回退位置见 [本轮报告](2026-11-18-knowledge-speech-answer-report.md)。

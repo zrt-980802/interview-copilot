@@ -45,6 +45,10 @@ from interview_copilot.services.corpus import CorpusIndex, source_settings
 from interview_copilot.services.mobile_access import MobileAccess
 from interview_copilot.services.history_export import export_session
 from interview_copilot.services.documents import DocumentLibrary, DocumentError, KINDS
+from interview_copilot.services.knowledge import KnowledgeStore
+from interview_copilot.services.semantic import SemanticIndex
+from interview_copilot.services.answer_context import _evidence_within
+from interview_copilot.services.question_flow import is_non_question, looks_unfinished, is_continuation
 from interview_copilot.services.remote_documents import download_github
 from interview_copilot.services.provider_settings import ProviderSettings, ProviderSettingsError, probe_provider
 from interview_copilot.legacy.mobile import create_mobile_app
@@ -58,9 +62,7 @@ from copilot import materials as mat_store                                     #
 
 CFG = {}
 MERGE_WAIT_MS = 1100
-# 出题后再来的段是否并入重答。默认关闭(0)：防止把快速连珠的下一题误并进上一题。
-# 语速慢的场景主要靠 wait_ms 防抖解决；极端情况可手动调大此值或用F8重答。
-CONTINUATION_MS = 0
+CONTINUATION_MS = 8000
 
 
 @asynccontextmanager
@@ -178,7 +180,15 @@ def answer_evidence(question: str, *, detail=False) -> list[dict]:
     _RUNTIME.library.sync_index()
     budget = CFG.get("corpus", {}).get("detail_budget_chars" if detail else "quick_budget_chars",
                                        4000 if detail else 2400)
-    return index.search(question, budget=budget, limit=5 if detail else 3)
+    retrieved = index.search(question, budget=budget, limit=5 if detail else 3)
+    knowledge_store = getattr(_RUNTIME,"knowledge",None)
+    if knowledge_store:
+        facts = knowledge_store.evidence(question,limit=3 if detail else 2)
+        retrieved = knowledge_store.annotate(retrieved)
+        seen = {(item["source"],tuple(item["lines"]),item["excerpt"]) for item in facts}
+        retrieved = facts + [item for item in retrieved if (item["source"],tuple(item["lines"]),item["excerpt"]) not in seen]
+        return _evidence_within(retrieved,budget)
+    return retrieved
 
 
 def jd_text() -> str:
@@ -283,12 +293,13 @@ class QuestionMerger:
 
     def __init__(self, emit):
         self.emit = emit
+        self.revise = self.on_extend = None
         self.pending = ""          # 尚未成句的累计文本
         self.timer: threading.Timer | None = None
         self.lock = threading.Lock()
         self.last_final_at = 0.0   # 最近一次成题时间
         self.last_final_text = ""
-        self.cont_timer: threading.Timer | None = None
+        self.last_context = self.pending_context = None
         self.version = 0
         self._timers = set()
 
@@ -298,12 +309,16 @@ class QuestionMerger:
                 if version is not None and version != self.version:
                     return
                 text = self.pending.strip()
+                context = self.pending_context
+                self.pending_context = None
                 self.pending = ""
                 self.timer = None
                 self.last_final_at = time.time()
                 self.last_final_text = text
             if text:
-                self.emit(text)
+                result = self.revise(text,context.turn_id) if context and self.revise else self.emit(text)
+                with self.lock:
+                    self.last_context = result
 
     def clear(self):
         with self.lock:
@@ -314,35 +329,48 @@ class QuestionMerger:
             self.pending = ""
             self.last_final_at = 0.0
             self.last_final_text = ""
+            self.last_context = self.pending_context = None
+
+    def end_continuation(self):
+        with self.lock:
+            self.last_final_at = 0.0
+            self.last_context = None
 
     def add_segment(self, text: str):
         text = (text or "").strip()
         if not text:
             return
+        if is_non_question(text):
+            return
         now = time.time()
+        extended = None
         with self.lock:
-            # 出题后不久又来的段 → 同一题的后续半句（仅当显式启用，默认关闭防连珠误并）
             continuation = (CONTINUATION_MS > 0
                             and self.last_final_at > 0
                             and (now - self.last_final_at) * 1000 < CONTINUATION_MS
-                            and not self.pending)
+                            and not self.pending and self.last_context is not None
+                            and is_continuation(self.last_final_text,text))
             if continuation:
                 combined = (self.last_final_text + " " + text).strip()
                 # 取消已发出的那道题的重答定时（如有），直接并入本次判定
                 self.last_final_at = 0.0
                 self.last_final_text = ""
                 self.pending = combined
+                extended = self.pending_context = self.last_context
             else:
                 self.pending = (self.pending + " " + text).strip()
             if self.timer:
                 self.timer.cancel()
             self.version += 1
             version = self.version
-            self.timer = threading.Timer(MERGE_WAIT_MS / 1000.0, lambda: self._flush(version))
+            delay = max(MERGE_WAIT_MS,int(CFG.get("merge",{}).get("incomplete_wait_ms",4000))) if looks_unfinished(self.pending) else MERGE_WAIT_MS
+            self.timer = threading.Timer(delay / 1000.0, lambda: self._flush(version))
             self.timer.daemon = True
             self._timers = {timer for timer in self._timers if timer.is_alive()}
             self._timers.add(self.timer)
             self.timer.start()
+        if extended and self.on_extend:
+            self.on_extend(extended.turn_id)
 
     def close(self, timeout=10.0):
         self.clear()
@@ -442,6 +470,7 @@ def spawn_quick(question: str, context: TaskContext, self_recent: str = ""):
                 return
             llm.stream_quick(history, resume, *callbacks[:3],
                              self_recent=self_recent, evidence=evidence, jd=jd,
+                             candidate_profile=rt.knowledge.profile() if rt.knowledge else "",
                              cancel_token=token, on_attempt=callbacks[3], on_context=callbacks[4])
         except StreamCancelled:
             pass
@@ -480,6 +509,7 @@ def spawn_detail(direction: str, turn_id: str | None = None):
             llm.stream_detail(turn.question, turn.quick, direction, history, resume,
                               *callbacks[:3], self_recent=self_recent,
                               evidence=evidence, enrich=enrich, jd=jd_text(),
+                              candidate_profile=rt.knowledge.profile() if rt.knowledge else "",
                               cancel_token=token, on_attempt=callbacks[3], on_context=callbacks[4])
         except StreamCancelled:
             pass
@@ -530,20 +560,48 @@ def _on_event(**ev):
         broadcast(ev)
         try:
             history_store.log_event(ev.get("type", "?"), {
-                "text": ev.get("text", ""), "speaker": ev.get("speaker")}, session_id=_DB_SESSION_ID)
+                "text": ev.get("text", ""), "speaker": ev.get("speaker"),
+                **{key:ev[key] for key in ("duration_ms","level_db","reason") if key in ev}}, session_id=_DB_SESSION_ID)
         except HistoryError:
             broadcast({"type": "status", "level": "error", "message": "历史记录写入失败，请检查服务状态"})
         if ev.get("type") == "question":
             if ev.get("speaker") == "self":
                 CONV.add(ev.get("text", ""))
                 SELF_TURN.note(ev.get("text", ""))
+                if not is_non_question(ev.get("text","")):
+                    MERGER.end_continuation()
                 return
             MERGER.add_segment(ev.get("text", ""))
 
 
 def _emit_merged(qtext: str):
     """merger 凑齐一道题后的出口。出题，并把候选人最近真实发言作为上下文注入。"""
-    _start_question(qtext, manual=False)
+    return _start_question(qtext, manual=False)
+
+
+def _pause_for_supplement(turn_id):
+    with _INTERVIEW_LOCK:
+        turn = SESSIONS.active_turn(_SESSION_ID)
+        if not turn or turn.turn_id != turn_id:
+            return
+        for answer in turn.answers:
+            if answer.status in {"pending","streaming"}:
+                context = SESSIONS.cancel_task(_SESSION_ID,answer.task_id)
+                if context:
+                    broadcast(_task_event(context,"answer_cancelled",reason="question_supplement"))
+
+
+def _revise_merged(qtext,turn_id):
+    with _INTERVIEW_LOCK:
+        turn = SESSIONS.active_turn(_SESSION_ID)
+        if not turn or turn.turn_id != turn_id:
+            return _start_question(qtext,manual=False)
+        history_store.log_event("question_revised",{"previous_question":turn.question,"previous_answer":turn.quick,"question":qtext},session_id=_DB_SESSION_ID)
+        history_store.turn_revise(int(turn_id.value) if turn_id.value.isdecimal() else None,qtext)
+        context = SESSIONS.revise_turn(_SESSION_ID,turn_id,qtext)
+        broadcast(_task_event(context,"answer_start",question=qtext,revised=True,at=time.strftime("%H:%M:%S")))
+        spawn_quick(qtext,context,self_ctx_quick())
+        return context
 
 
 def create_engine(mode: str, audio_source=None, stt_client=None, *, factory=None, status_cb=None):
@@ -561,6 +619,8 @@ def create_engine(mode: str, audio_source=None, stt_client=None, *, factory=None
 
 
 MERGER.emit = _emit_merged               # 接上真正的出题出口
+MERGER.revise = _revise_merged
+MERGER.on_extend = _pause_for_supplement
 
 
 def _refresh_hotwords():
@@ -587,11 +647,11 @@ def start_runtime(config=None, *, history_factory=HistoryStore, llm_factory=None
                 config = json.load(f)
         CFG = deepcopy(config)
         MERGE_WAIT_MS = int(CFG.get("merge", {}).get("wait_ms", 1100))
-        CONTINUATION_MS = int(CFG.get("merge", {}).get("continuation_ms", 0))
+        CONTINUATION_MS = int(CFG.get("merge", {}).get("smart_continuation_ms",8000))
         rt = SimpleNamespace(ready=False, workers=worker_factory(), engines=[], llm=None,
                              history=None, session_id=None, history_ended=False,
                              errors=[], audio_closed=False, tasks_ended=False, corpus=None, library=None,
-                             providers=None, retired_llms=[], llm_factory=llm_factory or LLMClient,
+                             providers=None, knowledge=None, retired_llms=[], llm_factory=llm_factory or LLMClient,
                              capture_devices={"loopback":None,"mic":None})
         _RUNTIME = rt
         app.state.runtime = rt
@@ -634,10 +694,24 @@ def start_runtime(config=None, *, history_factory=HistoryStore, llm_factory=None
                 eng = create_engine(mode, factory=engine_factory, status_cb=audio_event)
                 rt.engines.append(eng)
             ENGINE, SELF_ENGINE = rt.engines
-            rt.library.on_change = lambda: _refresh_hotwords() if _RUNTIME is rt and rt.ready else None
+            if background and CFG.get("knowledge",{}).get("enabled",True) and callable(getattr(rt.llm,"generate_json",None)):
+                options = CFG.get("knowledge",{})
+                semantic = (SemanticIndex(os.path.join(BASE_DIR,"data","documents","vectors.db"),
+                            model=options.get("semantic_model","BAAI/bge-m3")) if options.get("semantic_enabled",True) else None)
+                rt.corpus.semantic = semantic
+                rt.knowledge = KnowledgeStore(rt.library,rt.workers,lambda system,data: rt.llm.generate_json(system,data),semantic=semantic)
+
+            def documents_changed():
+                if _RUNTIME is rt and rt.ready:
+                    _refresh_hotwords()
+                    if rt.knowledge:
+                        rt.knowledge.schedule()
+            rt.library.on_change = documents_changed
             resume_store.bootstrap(explicit_path=CFG.get("resume_path"))
             _refresh_hotwords()
             rt.ready = True
+            if rt.knowledge:
+                rt.knowledge.schedule()
             if background:
                 def publish(ev):
                     with _INTERVIEW_LOCK:
@@ -725,7 +799,7 @@ def stop_runtime(timeout=10.0):
 
 @app.middleware("http")
 async def require_runtime(request, call_next):
-    if request.url.path in ("/files", "/settings") or request.url.path.startswith(("/api/files", "/api/providers")):
+    if request.url.path in ("/files", "/settings") or request.url.path.startswith(("/api/files", "/api/providers", "/api/audio")):
         denied = desktop_mobile_guard(request)
         if denied is not None:
             denied.headers["Cache-Control"] = "no-store"
@@ -734,7 +808,7 @@ async def require_runtime(request, call_next):
         if _RUNTIME is None or not _RUNTIME.ready:
             return JSONResponse({"ok": False, "error": "service is not ready"}, status_code=503)
     response = await call_next(request)
-    if request.url.path.startswith(("/api/mobile", "/api/history", "/api/files", "/api/providers")):
+    if request.url.path.startswith(("/api/mobile", "/api/history", "/api/files", "/api/providers", "/api/audio")):
         response.headers["Cache-Control"] = "no-store"
         response.headers["Referrer-Policy"] = "no-referrer"
     return response
@@ -785,6 +859,9 @@ async def state():
             "origin": (rmeta or {}).get("origin", ""),
         },
         "engine": {
+            "running": ENGINE.is_running(),
+            "device_index": getattr(ENGINE,"device_index",None),
+            "selection": _RUNTIME.capture_devices["loopback"],
             "device": ENGINE.device_name,
             "noise_floor_db": ENGINE.stats.get("noise_floor_db"),
             "speech_enter_db": ENGINE.stats.get("speech_enter_db"),
@@ -805,6 +882,23 @@ async def state():
         "devices": list_output_devices(),
         "input_devices": list_input_devices(),
     }
+
+
+@app.post("/api/audio/devices/refresh")
+async def refresh_audio_devices():
+    def refresh():
+        with _CAPTURE_LOCKS["loopback"], _CAPTURE_LOCKS["mic"]:
+            if not _RUNTIME or not _RUNTIME.ready:
+                return JSONResponse({"ok":False,"error":"服务已停止"},status_code=503)
+            if ENGINE.is_running() or SELF_ENGINE.is_running():
+                return JSONResponse({"ok":False,"error":"请先暂停采集，再刷新设备"},status_code=409)
+            try:
+                from copilot.audio import shutdown_audio
+                shutdown_audio()
+                return {"ok":True,"devices":list_output_devices(),"input_devices":list_input_devices()}
+            except Exception:
+                return JSONResponse({"ok":False,"error":"设备刷新失败，请检查音频设备后重试"},status_code=503)
+    return await asyncio.to_thread(refresh)
 
 
 @app.post("/api/start")
@@ -1071,7 +1165,12 @@ async def files_list():
         for kind, store in (("paper",knowledge),("reference",mat_store)):
             legacy.extend({"name":item.get("source") or item.get("title") or "原有资料", "kind":kind, "chars":item.get("chars",0)}
                           for item in store.load_status().get("items",[]))
-        return {"ok":True,"files":_RUNTIME.library.list(), "legacy":legacy,
+        files = _RUNTIME.library.list()
+        if _RUNTIME.knowledge:
+            analyses = _RUNTIME.knowledge.summaries()
+            for file in files:
+                file["knowledge"] = analyses.get(file["id"],{"status":"idle"})
+        return {"ok":True,"files":files, "legacy":legacy,
                 "resume_mode":"legacy" if _RUNTIME.library.resume() is None else "managed"}
     try:
         return await asyncio.to_thread(read)
@@ -1126,7 +1225,10 @@ async def files_download(identity: str):
 @app.get("/api/files/{identity}")
 async def files_get(identity: str):
     try:
-        return {"ok":True,"file":await asyncio.to_thread(_RUNTIME.library.get, identity, preview=True)}
+        file = await asyncio.to_thread(_RUNTIME.library.get, identity, preview=True)
+        if _RUNTIME.knowledge:
+            file["knowledge"] = await asyncio.to_thread(_RUNTIME.knowledge.detail,identity)
+        return {"ok":True,"file":file}
     except (KeyError, OSError, sqlite3.Error) as exc:
         return _file_error(exc)
 
@@ -1136,6 +1238,8 @@ async def files_update(identity: str, payload: dict):
     try:
         result = await asyncio.to_thread(_RUNTIME.library.update, identity, payload)
         await asyncio.to_thread(_refresh_hotwords)
+        if _RUNTIME.knowledge:
+            await asyncio.to_thread(_RUNTIME.knowledge.schedule)
         return {"ok":True,"file":result}
     except (KeyError, DocumentError, OSError, sqlite3.Error) as exc:
         return _file_error(exc)
@@ -1146,6 +1250,38 @@ async def files_retry(identity: str):
     try:
         return {"ok":True,"file":await asyncio.to_thread(_RUNTIME.library.retry, identity)}
     except (KeyError, DocumentError, OSError, sqlite3.Error) as exc:
+        return _file_error(exc)
+
+
+@app.get("/api/files/{identity}/source")
+async def files_source(identity: str, start: int = 1, end: int = 80):
+    try:
+        return {"ok":True,**await asyncio.to_thread(_RUNTIME.library.source,identity,start,end)}
+    except (KeyError,DocumentError,OSError,sqlite3.Error) as exc:
+        return _file_error(exc)
+
+
+@app.post("/api/files/{identity}/analyze")
+async def files_analyze(identity: str):
+    if not _RUNTIME.knowledge:
+        return JSONResponse({"ok":False,"error":"结构化分析未启用，请检查模型及 knowledge 配置"},status_code=400)
+    try:
+        await asyncio.to_thread(_RUNTIME.knowledge.retry,identity)
+        return JSONResponse({"ok":True},status_code=202)
+    except (KeyError,DocumentError,OSError,sqlite3.Error) as exc:
+        return _file_error(exc)
+
+
+@app.patch("/api/files/{identity}/facts/{fact_id}")
+async def files_review_fact(identity: str, fact_id: str, payload: dict):
+    if not _RUNTIME.knowledge:
+        return JSONResponse({"ok":False,"error":"结构化分析未启用"},status_code=400)
+    try:
+        if set(payload) != {"decision"} or not isinstance(payload["decision"],str):
+            raise DocumentError("请指定有效的核对操作")
+        await asyncio.to_thread(_RUNTIME.knowledge.review,identity,fact_id,payload["decision"])
+        return {"ok":True}
+    except (KeyError,DocumentError,OSError,sqlite3.Error) as exc:
         return _file_error(exc)
 
 
@@ -1367,6 +1503,14 @@ def mobile_urls():
                             and not ipaddress.ip_address(entry[4][0]).is_link_local})
         except OSError:
             hosts = []
+        try:
+            # A UDP connect chooses a local route without sending a datagram.
+            with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as route:
+                route.connect(("192.0.2.1",9))
+                preferred = route.getsockname()[0]
+            hosts.sort(key=lambda address:(address != preferred,address))
+        except OSError:
+            pass
     return [f"http://[{host}]:{port}/" if ":" in host else f"http://{host}:{port}/" for host in hosts]
 
 
@@ -1381,7 +1525,13 @@ def desktop_mobile_guard(request):
 
 
 def mobile_status():
+    import ipaddress
+    try:
+        local_only = ipaddress.ip_address(MOBILE_LISTENER["host"]).is_loopback
+    except ValueError:
+        local_only = MOBILE_LISTENER["host"] == "localhost"
     return {**MOBILE_LISTENER, "urls": mobile_urls() if MOBILE_LISTENER["enabled"] else [],
+            "local_only":local_only,
             "devices": MOBILE_ACCESS.count(_SESSION_ID.value),
             **MOBILE_ACCESS.challenge(_SESSION_ID.value)}
 

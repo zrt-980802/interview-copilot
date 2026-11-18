@@ -25,6 +25,7 @@ import httpx
 import numpy as np
 
 from interview_copilot.domain.models import AudioSegment, Transcript, utc_now
+from interview_copilot.providers.http_policy import trust_env_for_url
 
 __all__ = [
     "OpenAICompatibleTranscriber",
@@ -176,6 +177,7 @@ class OpenAICompatibleTranscriber:
                 pool=self._timeouts.pool,
             ),
             transport=transport,
+            trust_env=trust_env_for_url(base_url),
         )
 
     @staticmethod

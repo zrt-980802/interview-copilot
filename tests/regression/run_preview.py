@@ -28,7 +28,9 @@ def create_preview():
     patch = pytest.MonkeyPatch()
     server = load_synthetic_server(patch, started=False)
     server.app.state.synthetic_preview = True
-    server.list_input_devices = lambda: [{"index":24,"name":"模拟麦克风（无录音）","hostapi":"Synthetic"}]
+    server.list_output_devices = lambda: [{"index":22,"name":"模拟耳机（无录音）","hostapi":"Synthetic","is_default":True},
+                                         {"index":23,"name":"模拟扬声器（无录音）","hostapi":"Synthetic","is_default":False}]
+    server.list_input_devices = lambda: [{"index":24,"name":"模拟麦克风（无录音）","hostapi":"Synthetic","is_default":True}]
     server.broadcast = server.real_broadcast
     server.threading.Thread = threading.Thread
     server.threading.Timer = threading.Timer
@@ -104,6 +106,11 @@ def create_preview():
     async def disconnect():
         server.EVENTS.disconnect_all()
         return {"ok": True}
+
+    @server.app.post("/__regression__/voice")
+    async def voice(body: dict):
+        server._on_event(type="question",text=body["text"],speaker=body.get("speaker","interviewer"))
+        return {"ok":True}
 
     @server.app.post("/__regression__/next-pairing-window")
     async def next_pairing_window():

@@ -23,6 +23,7 @@ audio = [
     "PyAudioWPatch>=0.2.12.7; platform_system == 'Windows'",
 ]
 pdf = ["pypdf>=5,<7"]
+semantic = ["sentence-transformers>=3,<6"]
 dev = ["pytest>=8,<10"]
 
 [tool.setuptools]

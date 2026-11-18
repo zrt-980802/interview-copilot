@@ -26,11 +26,37 @@ def pair(desktop, phone):
     return response
 
 
+def test_mobile_status_distinguishes_loopback_preview_from_lan_listener(legacy_server):
+    server = legacy_server
+    server.MOBILE_LISTENER.update(enabled=True,host='127.0.0.1',port=8543)
+    assert server.mobile_status()['local_only'] is True
+    server.MOBILE_LISTENER.update(host='192.168.31.188',port=8528)
+    status = server.mobile_status()
+    assert status['local_only'] is False
+    assert status['urls'] == ['http://192.168.31.188:8528/']
+
+
+def test_mobile_urls_prefer_current_route_over_virtual_adapter(legacy_server,monkeypatch):
+    class Route:
+        def __enter__(self): return self
+        def __exit__(self,*args): pass
+        def connect(self,address): pass
+        def getsockname(self): return ('192.168.31.188',0)
+    legacy_server.MOBILE_LISTENER.update(enabled=True,host='0.0.0.0',port=8528)
+    monkeypatch.setattr(socket,'getaddrinfo',lambda *args:[
+        (socket.AF_INET,0,0,'',('172.25.240.1',0)),
+        (socket.AF_INET,0,0,'',('192.168.31.188',0)),
+        (socket.AF_INET,0,0,'',('127.0.0.1',0)),
+    ])
+    monkeypatch.setattr(socket,'socket',lambda *args:Route())
+    assert legacy_server.mobile_urls() == ['http://192.168.31.188:8528/','http://172.25.240.1:8528/']
+
+
 def test_unauthorized_reads_and_management_routes_are_unavailable(legacy_server):
     desktop, phone = clients(legacy_server)
     for path in ("/api/snapshot", "/api/events"):
         assert phone.get(path).status_code == 401
-    for path in ("/api/ask", "/api/clear", "/api/detail", "/api/start", "/api/resume/upload", "/api/mobile/pairing"):
+    for path in ("/api/ask", "/api/clear", "/api/detail", "/api/start", "/api/audio/devices/refresh", "/api/resume/upload", "/api/mobile/pairing"):
         assert phone.post(path, json={}).status_code == 404
     for path in ("/api/state", "/history", "/files", "/api/files", "/api/files/example/download", "/static/files.html", "/static/js/files.js",
                  "/api/history/sessions", "/api/history/session/1", "/api/history/export/1",

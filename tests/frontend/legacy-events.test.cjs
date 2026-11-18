@@ -5,6 +5,7 @@ const path = require('node:path');
 const {chromium} = require('playwright');
 
 const html = fs.readFileSync(path.join(__dirname, '../../static/index.html'), 'utf8')
+  .replace('<link rel="stylesheet" href="/static/app-shell.css">', '<style>' + fs.readFileSync(path.join(__dirname, '../../static/app-shell.css'), 'utf8') + '</style>')
   .replace('<link rel="stylesheet" href="/static/workspace.css">', '<style>' + fs.readFileSync(path.join(__dirname, '../../static/workspace.css'), 'utf8') + '</style>');
 let browser;
 before(async () => { browser = await chromium.launch({headless: true, executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH || undefined,
@@ -80,6 +81,23 @@ test('reset rejects old answer events and clears question retry state', async t 
   await page.keyboard.press('F8');
   assert.equal(await page.evaluate(() => window.requests.filter(request => request.url === '/api/ask').length), 0);
   assert.deepEqual(errors, []);
+});
+
+test('supplement updates the same question card and rejects old generation events',async t => {
+  const {page,errors,emit,quick}=await fixture(t);
+  const initial=await quick('101','quick-old','Partial protocol question');
+  await emit({...initial,type:'answer_done',full:'【开口】Obsolete answer\n【方向】Old direction ::: old'});
+  const revised={...initial,generation:102,task_id:'quick-revised'};
+  await emit({...revised,type:'answer_start',question:'Complete protocol question with tool result',revised:true});
+  await emit({...initial,type:'answer_done',full:'late obsolete answer'});
+  await emit({...revised,type:'answer_done',full:'【开口】Corrected complete answer'});
+  assert.equal(await page.locator('.qa').count(),1);
+  assert.equal(await page.locator('.question-link').count(),1);
+  assert.match(await page.locator('.qbox').textContent(),/Complete protocol/);
+  assert.match(await page.locator('.nav-label').textContent(),/Complete protocol/);
+  assert.match(await page.locator('.quickcard').textContent(),/Corrected complete answer/);
+  assert.doesNotMatch(await page.locator('.qa').textContent(),/Obsolete|Old direction|late obsolete/);
+  assert.deepEqual(errors,[]);
 });
 
 test('detail failures render locally and allow retry', async t => {
@@ -391,7 +409,8 @@ test('real model transport fallback and cancellation restore consistently after 
   await page.locator('.qa').nth(1).scrollIntoViewIfNeeded();
   const control=page.locator('.qa').nth(1).getByRole('button',{name:'取消生成'});
   const dimensions=await control.boundingBox();
-  assert.equal(dimensions.width,28);assert.equal(dimensions.height,28);
+  assert.ok(dimensions.width>=88&&dimensions.width<=120);assert.ok(dimensions.height>=32);
+  assert.match(await control.innerText(),/取消生成/);
   if(process.env.INTERVIEW_SCREENSHOT_DIR){
     await page.screenshot({path:path.join(process.env.INTERVIEW_SCREENSHOT_DIR,'active-cancel-desktop.png'),fullPage:true});
     await page.setViewportSize({width:390,height:844});

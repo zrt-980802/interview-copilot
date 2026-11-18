@@ -8,6 +8,11 @@
     "detail_budget_chars": 4000
   },
   "host": "127.0.0.1",
+  "knowledge": {
+    "enabled": true,
+    "semantic_enabled": true,
+    "semantic_model": "BAAI/bge-m3"
+  },
   "port": 8527,
   "mobile": {
     "enabled": false,
@@ -16,7 +21,8 @@
   },
   "merge": {
     "wait_ms": 1100,
-    "continuation_ms": 0
+    "smart_continuation_ms": 8000,
+    "incomplete_wait_ms": 4000
   },
   "stt": {
     "url": "http://127.0.0.1:8760/v1",

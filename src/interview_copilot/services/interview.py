@@ -146,6 +146,21 @@ class SessionManager:
                 turn.answers[(kind, key)] = _Answer(context)
             return context
 
+    def revise_turn(self, session_id: SessionId, turn_id: TurnId, question: str) -> TaskContext:
+        if not isinstance(question,str) or not question.strip():
+            raise ValueError("question must not be empty")
+        with self._lock:
+            session = self._sessions[session_id]
+            if session.state.active_turn_id != turn_id:
+                raise ValueError("only the active turn can be revised")
+            for task in session.state.task_registry.values():
+                if task.context.turn_id == turn_id:
+                    self._cancel_task(session,task)
+            generation = session.state.revise_active_turn(turn_id,question.strip())
+            previous = session.turns[turn_id]
+            session.turns[turn_id] = _Turn(question.strip(),generation,at=previous.at)
+            return self.start_task(session_id,turn_id,"quick")
+
     def _active_task(self, context: TaskContext) -> _Task | None:
         session = self._sessions.get(context.session_id)
         if session is None:

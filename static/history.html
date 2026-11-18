@@ -6,16 +6,21 @@
   <title>历史复盘 · 面试辅助</title>
   <link rel="stylesheet" href="/static/history.css">
   <link rel="stylesheet" href="/static/answer-content.css">
+  <link rel="stylesheet" href="/static/app-shell.css">
   <script src="/static/vendor/lucide.js" defer></script>
   <script src="/static/js/history.js" type="module"></script>
 </head>
-<body>
-  <header>
-    <a id="workspaceBack" href="/" class="icon" title="返回工作区" aria-label="返回工作区"><i data-lucide="arrow-left"></i></a>
-    <button id="backToList" class="icon" title="返回会话列表" aria-label="返回会话列表"><i data-lucide="arrow-left"></i></button>
-    <h1>历史复盘</h1>
-    <button id="refresh" class="icon" title="刷新历史" aria-label="刷新历史"><i data-lucide="refresh-cw"></i></button>
+<body class="history-page">
+  <header class="app-header">
+    <a class="app-brand" href="/"><i data-lucide="audio-lines"></i>面试辅助</a>
+    <nav class="app-nav" aria-label="主导航">
+      <a id="workspaceBack" href="/"><i data-lucide="messages-square"></i>面试工作区</a>
+      <a href="/files"><i data-lucide="library"></i>资料库</a>
+      <a href="/history" aria-current="page"><i data-lucide="history"></i>历史复盘</a>
+      <a href="/settings"><i data-lucide="settings-2"></i>模型设置</a>
+    </nav>
   </header>
+  <div class="page-toolbar"><div class="page-title"><h1>历史复盘</h1></div><div class="page-actions"><button id="backToList" class="command back-command"><i data-lucide="arrow-left"></i>返回会话列表</button><button id="refresh" class="command subtle"><i data-lucide="refresh-cw"></i>刷新历史</button></div></div>
   <div class="history-workspace">
     <aside id="sessionsPanel" aria-label="历史会话">
       <form id="searchForm" role="search"><i data-lucide="search"></i><input id="search" type="search" maxlength="200" placeholder="搜索问题或回答" aria-label="搜索历史"></form>
@@ -28,7 +33,7 @@
       <div id="reviewState" role="status"></div>
       <div id="sessionToolbar" hidden>
         <div class="session-heading"><h2 id="sessionTitle"></h2><div id="sessionMeta"></div></div>
-        <a id="export" class="icon" title="导出 Markdown" aria-label="导出 Markdown"><i data-lucide="download"></i></a>
+        <a id="export" class="command"><i data-lucide="download"></i>导出 Markdown</a>
       </div>
       <div id="reviewContent" tabindex="0"></div>
     </main>

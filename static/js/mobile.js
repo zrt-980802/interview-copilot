@@ -19,6 +19,8 @@ const savePreference = (key, value) => { try { localStorage.setItem(key, value);
 document.documentElement.dataset.theme = readPreference('viewer-theme') || 'dark';
 $('fontSize').value = Math.max(16, Math.min(26, Number(readPreference('viewer-font')) || 19));
 $('reader').style.fontSize = $('fontSize').value + 'px';
+$('fontValue').textContent = $('fontSize').value;
+$('themeLabel').textContent = document.documentElement.dataset.theme === 'light' ? '深色' : '浅色';
 window.lucide?.createIcons();
 
 function paired(value) {
@@ -115,6 +117,7 @@ function apply(event) {
   if (event.type === 'answer_start') {
     const previous = turns.get(event.turn_id);
     if (previous && previous.generation >= event.generation) return;
+    for (const [id,target] of tasks) if (target.turn.turn_id === event.turn_id) tasks.delete(id);
     for (const {answer} of tasks.values()) if (answer.level === 'quick' && ['pending', 'streaming'].includes(answer.status)) answer.status = 'cancelled';
     const turn = {turn_id: event.turn_id, question: event.question, generation: event.generation, answers: []};
     const answer = {task_id: event.task_id, level: 'quick', status: 'pending', content: '', attempt: 0};
@@ -178,11 +181,13 @@ $('turns').onchange = () => {
 $('latest').onclick = selectLatest;
 $('focus').onclick = () => {
   const focused = document.body.classList.toggle('focused'); $('focus').setAttribute('aria-pressed', String(focused));
+  $('focusLabel').textContent = focused ? '退出专注' : '专注显示';
 };
-$('fontSize').oninput = () => { $('reader').style.fontSize = $('fontSize').value + 'px'; savePreference('viewer-font', $('fontSize').value); };
+$('fontSize').oninput = () => { $('reader').style.fontSize = $('fontSize').value + 'px'; $('fontValue').textContent = $('fontSize').value; savePreference('viewer-font', $('fontSize').value); };
 $('theme').onclick = () => {
   const theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
   document.documentElement.dataset.theme = theme; savePreference('viewer-theme', theme);
+  $('themeLabel').textContent = theme === 'light' ? '深色' : '浅色';
 };
 $('logout').onclick = async () => {
   try {

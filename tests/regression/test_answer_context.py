@@ -5,6 +5,7 @@ import pytest
 
 from copilot.llm import LLMClient
 from interview_copilot.services.cancellation import CancellationToken
+from interview_copilot.services.answer_context import answer_scope
 
 
 def request_for(monkeypatch, invoke):
@@ -167,3 +168,38 @@ def test_local_clarification_has_normal_attempt_and_cancellation_lifecycle(cance
     assert bool(answers) == (cancel_at == "none")
     if answers:
         assert deltas == answers and "【方向】" not in answers[0]
+
+
+@pytest.mark.parametrize("question,mode", [
+    ("你怎么理解 TCP 三次握手？","technical"),
+    ("Explain Python's GIL and CPU-bound threads.","technical"),
+    ("如果让你设计一个在线选座系统，怎么防止超卖？","design"),
+    ("How would you design a seat reservation service?","design"),
+    ("你已经独立上线过百万并发的金融系统吗？","experience"),
+    ("What was your role in your project?","experience"),
+])
+def test_question_scope_allows_model_knowledge_without_promoting_design_to_experience(question,mode):
+    scope = answer_scope(question,[])
+    assert scope["mode"] == mode
+    assert scope["model_knowledge_allowed"] and scope["reference_policy"] == "model_knowledge"
+
+
+@pytest.mark.parametrize("mode", ["quick","detail"])
+def test_general_question_uses_model_knowledge_without_unrelated_resume_and_keeps_conversation(monkeypatch,mode):
+    question = "你怎么理解 TCP 三次握手？为什么不是两次？"
+    def invoke(client,done,error):
+        kwargs = {"papers":"Unrelated research summary","self_recent":"I know the SYN flag.",
+                  "candidate_profile":"用户已排除旧资料中的百万并发指标"}
+        if mode == "quick":
+            client.stream_quick([{"role":"user","content":question}],"Unrelated resume",
+                                lambda delta:None,done,error,**kwargs)
+        else:
+            client.stream_detail(question,"Explain SYN and ACK.","序列号",[],"Unrelated resume",
+                                 lambda delta:None,done,error,**kwargs)
+    messages = request_for(monkeypatch,invoke)
+    reference = json.loads(messages[1]["content"])
+    assert reference["resume"] == reference["papers"] == ""
+    assert reference["candidate_speech"] == "I know the SYN flag."
+    assert reference["candidate_profile"] == "用户已排除旧资料中的百万并发指标"
+    assert reference["answer_scope"]["mode"] == "technical"
+    assert reference["answer_scope"]["model_knowledge_allowed"]

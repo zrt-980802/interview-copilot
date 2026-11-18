@@ -175,3 +175,37 @@ def test_cancellation_during_index_transaction_restores_previous_snapshot(index,
     monkeypatch.setattr(corpus, "_substantive", original)
     index.sync_sources([{"label": "new", "path": str(tmp_path)}])
     assert not index.search("stabletoken") and index.search("newtoken")
+
+
+def test_fact_cards_sharing_a_quote_do_not_duplicate_evidence_or_fusion_scores(index):
+    from types import SimpleNamespace
+
+    shared = {"source":"notes:method.md", "title":"Method", "lines":[10,10],
+              "text":"retrieval overview describes the approach"}
+    detail = {"source":"notes:method.md", "title":"Method", "lines":[20,20],
+              "text":"retrieval descriptors remove distracting entity names"}
+    index.update_documents("facts", [dict(shared,id=str(number)) for number in range(4)] + [dict(detail,id="detail")])
+    lexical = index.search("retrieval", budget=4000)
+    assert len(lexical) == 2
+    rows = []
+    for item in reversed(lexical):
+        rows.append({"doc_id":"facts:detail", "source":item["source"], "heading":"Method", "kind":"reference",
+                     "line_start":item["lines"][0], "line_end":item["lines"][1], "excerpt":item["excerpt"]})
+    index.semantic = SimpleNamespace(search=lambda question:rows)
+    original = [item["lines"] for item in index.search("retrieval", budget=4000)]
+    index.semantic = SimpleNamespace(search=lambda question:[rows[0]] + [rows[1]] * 12)
+    assert [item["lines"] for item in index.search("retrieval", budget=4000)] == original
+
+
+def test_semantic_question_focuses_on_mechanism_while_document_name_limits_sources(index):
+    from types import SimpleNamespace
+
+    index.update_documents("test", [{**document("method", "MethodA uses descriptors for retrieval."), "title":"MethodA"},
+                                    document("other", "The other method describes retrieval.")])
+    questions = []
+    index.semantic = SimpleNamespace(search=lambda question:questions.append(question) or [])
+    evidence = index.search("MethodA 为什么用描述符检索？")
+    assert questions == ["为什么用描述符检索？"]
+    assert [item["source"] for item in evidence] == ["notes:method.md"]
+    index.search("MethodA")
+    assert questions[-1] == "MethodA"

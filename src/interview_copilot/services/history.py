@@ -112,6 +112,11 @@ class _Writer(threading.Thread):
                     conn.execute("UPDATE turns SET quick_card=?, quick_ms=? WHERE id=?",
                                  (data["quick_card"], data["quick_ms"], data["turn_id"]))
                     _Writer._document(conn, data, "quick")
+                elif kind == "turn_revise":
+                    conn.execute("UPDATE turns SET question=?,quick_card=NULL,quick_ms=NULL WHERE id=?",
+                                 (data["question"],data["turn_id"]))
+                    conn.execute("DELETE FROM details WHERE turn_id=?",(data["turn_id"],))
+                    conn.execute("DELETE FROM answer_documents WHERE turn_id=?",(data["turn_id"],))
                 elif kind == "detail":
                     cursor = conn.execute("INSERT INTO details(turn_id,direction,content,ts) VALUES(?,?,?,?)",
                                           (data["turn_id"], data["direction"], data["content"], data["ts"]))
@@ -243,6 +248,10 @@ class HistoryStore:
         if turn_id is not None:
             self._submit("turn_quick", {"turn_id": turn_id, "quick_card": quick_card, "quick_ms": round(quick_ms, 0),
                                         **self._record(document, task_id, attempt, model)})
+
+    def turn_revise(self, turn_id, question):
+        if turn_id is not None:
+            self._submit("turn_revise",{"turn_id":turn_id,"question":question},wait=True)
 
     def detail_add(self, turn_id, direction, content, *, document=None, task_id="", attempt=0, model=""):
         if turn_id is not None:

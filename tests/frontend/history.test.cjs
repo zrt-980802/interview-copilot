@@ -50,7 +50,7 @@ test('history reads real persisted answers, sources and details, searches and ex
   const {page,request,errors} = await fixture(t);
   t.after(() => fetch(base + '/api/clear', {method:'POST'}));
   await request.post(base + '/api/clear');
-  const question = '[regression:sources] 历史复盘：接口优化的实际依据';
+  const question = '[regression:sources] 历史复盘：接口优化的实际依据（我的项目经历）';
   const asked = await (await request.post(base + '/api/ask',{data:{text:question}})).json();
   await waitForSaved(request, asked.session_id, value => value.turns[0]?.quick_document);
   const detail = await request.post(base + '/api/detail',{data:{turn_id:asked.turn_id,direction:'验证方法'}});
@@ -58,7 +58,7 @@ test('history reads real persisted answers, sources and details, searches and ex
   const saved = await waitForSaved(request, asked.session_id, value => value.turns[0]?.details.length === 1);
   await page.goto(base + '/history');
   await page.getByRole('searchbox').fill('历史复盘：接口优化');
-  await page.locator('#sessionList .session-row').filter({hasText:question}).click();
+  await page.locator(`[data-session-id="${asked.session_id}"]`).click();
   await page.getByRole('button',{name:'查看来源 〔context:resume〕'}).click();
   assert.match(await page.locator('.source-excerpt').first().textContent(), /角色为接口开发/);
   assert.match(await page.locator('.answer-toolbar').first().textContent(), /offline-primary/);

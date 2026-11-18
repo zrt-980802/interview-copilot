@@ -9,8 +9,8 @@ const node = (tag, className, text) => {
   return element;
 };
 const icon = (name, label) => {
-  const button = node('button', 'icon'); button.type = 'button'; button.title = label; button.setAttribute('aria-label', label);
-  const symbol = node('i'); symbol.dataset.lucide = name; button.append(symbol); return button;
+  const button = node('button', 'command copy-command'); button.type = 'button'; button.title = label; button.setAttribute('aria-label', label);
+  const symbol = node('i'); symbol.dataset.lucide = name; button.append(symbol,node('span','copy-label',label)); return button;
 };
 async function get(url, signal) {
   const response = await fetch(url, {signal, cache:'no-store'});
@@ -54,8 +54,8 @@ function answerView(content, level, document, status, meta) {
   toolbar.append(node('span', '', [description, meta?.model, meta?.attempt > 1 ? `尝试 ${meta.attempt}` : ''].filter(Boolean).join(' · ')));
   const copy = icon('copy', '复制回答');
   copy.onclick = async () => {
-    try { await navigator.clipboard.writeText(content); copy.title = '已复制'; copy.setAttribute('aria-label', '已复制'); }
-    catch { copy.title = '复制失败'; copy.setAttribute('aria-label', '复制失败'); }
+    try { await navigator.clipboard.writeText(content); copy.title = '已复制'; copy.setAttribute('aria-label', '已复制'); copy.querySelector('.copy-label').textContent = '已复制'; }
+    catch { copy.title = '复制失败'; copy.setAttribute('aria-label', '复制失败'); copy.querySelector('.copy-label').textContent = '复制失败'; }
   };
   toolbar.append(copy); root.append(body, toolbar); return root;
 }

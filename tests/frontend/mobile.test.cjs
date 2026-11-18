@@ -67,7 +67,7 @@ test('desktop pairing QR and phone code grant share one answer without auto reco
   await computer.locator('#connectionState').filter({hasText:'已连接'}).waitFor();
   assert.deepEqual(started, []);
   await computer.getByRole('button',{name:'手机显示',exact:true}).click();
-  await computer.locator('#phoneState').filter({hasText:'手机端口已开启'}).waitFor();
+  await computer.locator('#phoneState').filter({hasText:'仅本机预览'}).waitFor();
   await computer.getByRole('button',{name:'生成配对码'}).click();
   await computer.waitForFunction(() => document.querySelector('#phoneQr').naturalWidth > 0);
   await screenshot(computer, 'pairing-desktop');
@@ -155,6 +155,25 @@ test('phone attempts and cancellation recover with the same task identity', {ski
   await phone.reload(); await phone.locator('.answer-status').filter({hasText:'已取消'}).waitFor();
   assert.match(await phone.locator('#answers').textContent(), /先明确目标/);
   assert.deepEqual(errors, []);
+});
+
+test('speech supplement revises one shared turn on desktop phone and history', {skip},async t => {
+  const {phone,computer,request,errors,pair,complete}=await fixture(t,{desktop:true});
+  await pair();
+  const first='说明 Function Call 消息协议流，模型返回什么结构？';
+  await request.post(desktopUrl+'/__regression__/voice',{data:{text:first}}); await complete(1);
+  await request.post(desktopUrl+'/__regression__/voice',{data:{text:'结果以什么身份回传？'}});
+  await phone.locator('#question').filter({hasText:'结果以什么身份回传'}).waitFor(); await complete(1);
+  assert.equal(await computer.locator('.qa').count(),1);
+  assert.match(await computer.locator('.qbox').textContent(),/模型返回什么结构.*结果以什么身份回传/);
+  const state=await (await request.get(desktopUrl+'/api/session/snapshot')).json();
+  const history=await (await request.get(desktopUrl+'/api/history/session/'+state.session_id)).json();
+  assert.equal(history.session.turns.length,1);
+  assert.equal(history.session.turns[0].question,first+' 结果以什么身份回传？');
+  await phone.reload(); await phone.locator('#connection').filter({hasText:'已连接'}).waitFor();
+  assert.equal(await phone.locator('#turns option').count(),1);
+  assert.match(await phone.locator('#question').textContent(),/结果以什么身份回传/);
+  assert.deepEqual(errors,[]);
 });
 
 test('phone narrow screens, large type, theme and focus stay within the viewport', {skip}, async t => {

@@ -14,7 +14,7 @@
   <header>
     <div class="brand"><i data-lucide="audio-lines"></i><span>面试辅助</span></div>
     <span id="connection" role="status">连接中</span>
-    <button id="theme" class="icon" title="切换明暗" aria-label="切换明暗"><i data-lucide="sun-moon"></i></button>
+    <button id="theme" class="mobile-command" title="切换明暗" aria-label="切换明暗"><i data-lucide="sun-moon"></i><span id="themeLabel">浅色</span></button>
   </header>
   <main id="pairing" hidden>
     <form id="pairForm">
@@ -29,8 +29,8 @@
   <div id="viewer" hidden>
     <div class="reading-tools">
       <label class="turn-picker"><span>题目</span><select id="turns" aria-label="选择题目"><option>暂无题目</option></select></label>
-      <button id="latest" class="icon" aria-label="跟随最新题" title="跟随最新题" aria-pressed="true"><i data-lucide="list-end"></i></button>
-      <button id="focus" class="icon" aria-label="专注显示" title="专注显示" aria-pressed="false"><i data-lucide="maximize"></i></button>
+      <div class="reading-actions"><button id="latest" class="mobile-command" aria-label="跟随最新题" title="跟随最新题" aria-pressed="true"><i data-lucide="list-end"></i>最新题</button>
+      <button id="focus" class="mobile-command" aria-label="专注显示" title="专注显示" aria-pressed="false"><i data-lucide="maximize"></i><span id="focusLabel">专注显示</span></button></div>
     </div>
     <div id="reader" tabindex="0">
       <div id="empty">等待新问题</div>
@@ -39,9 +39,9 @@
     <footer>
       <div id="capture" role="status">采集未开启</div>
       <div class="settings">
-        <label class="size-control"><i data-lucide="type"></i><input id="fontSize" type="range" min="16" max="26" value="19" step="1" aria-label="文字大小"></label>
-        <button id="awake" class="icon" title="屏幕常亮" aria-label="屏幕常亮" aria-pressed="false"><i data-lucide="lamp-desk"></i></button>
-        <button id="logout" class="icon" title="断开配对" aria-label="断开配对"><i data-lucide="log-out"></i></button>
+        <label class="size-control"><span>字号</span><input id="fontSize" type="range" min="16" max="26" value="19" step="1" aria-label="文字大小"><output id="fontValue" for="fontSize">19</output></label>
+        <button id="awake" class="mobile-command" title="屏幕常亮" aria-label="屏幕常亮" aria-pressed="false"><i data-lucide="lamp-desk"></i>屏幕常亮</button>
+        <button id="logout" class="mobile-command" title="断开配对" aria-label="断开配对"><i data-lucide="log-out"></i>断开配对</button>
       </div>
     </footer>
   </div>

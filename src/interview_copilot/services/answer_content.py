@@ -28,7 +28,8 @@ _MARKDOWN.renderer.rules["link_open"] = _link_open
 def context_sources(reference: dict) -> list[dict]:
     sources = []
     for field, kind in (("resume", "candidate_material"), ("candidate_speech", "candidate_speech"),
-                        ("papers", "paper"), ("jd", "job_description"), ("enrichment", "external")):
+                        ("papers", "paper"), ("jd", "job_description"), ("enrichment", "external"),
+                        ("candidate_profile","review_constraints")):
         text = reference.get(field, "")
         if text:
             sources.append({"id": "context:" + field, "source": "context:" + field,

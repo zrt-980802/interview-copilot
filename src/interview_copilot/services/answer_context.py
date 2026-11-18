@@ -16,6 +16,43 @@ class ContextBudgetExceeded(ValueError):
     pass
 
 
+def answer_scope(question, evidence, profile=""):
+    query = set(terms(question))
+    project = any(item.get("kind") == "candidate_material" and
+                  item.get("fact_check",{}).get("field") not in {"publication_status","period"} and
+                  len(query.intersection(terms(item.get("fact_check",{}).get("subject",item.get("heading",""))))) >= 2
+                  for item in evidence)
+    personal = bool(re.search(r"本人|简历|经历|自我介绍|毕业|在读|你(?:以前|曾经|是否|有没有|已经|独立|在|负责|参与|做过)|"
+                              r"[你我]的(?:项目|角色|工作|背景|职责)|你.*(?:做过|负责过|上线过|参与过)|"
+                              r"\b(?:my|your)\s+(?:project|experience|work|role|background|resume)\b|\b(?:have|did) you\b",question,re.I))
+    design = bool(re.search(r"假设|假如|如果(?:要|让|由)|设计(?:一个|一套)|如何设计|怎么设计|\bhow would\b|\bsuppose\b|\bdesign (?:a|an)\b",question,re.I))
+    mode = "design" if design else "experience" if personal or project else "technical"
+    scope = {"mode":mode,"model_knowledge_allowed":True,
+             "reference_policy":"optional_references" if evidence else "model_knowledge",
+             "knowledge_guidance":"通用知识可以直接作答；资料只提供相关补充，不是知识白名单。忽略关联低的片段，不因资料没有覆盖而拒答，不强行联系本人项目或虚构引用。"}
+    if mode == "experience":
+        scope["boundary"] = "只将明确支持的部分作为个人经历；其余具体实现以通用方案或待确认表述。未知不能用‘没有/没做过’直接否认。"
+    if mode == "experience" and project and re.search(r"如何|怎么|怎样|实现|处理|机制",question):
+        scope["mode"] = "project_method"
+        scope["boundary"] = "先说原文支持的做法范围，再用‘一种可行实现’解释机制。原文未明确的主键、阈值、校验和冲突裁决规则不能写成本人已实施。"
+    if mode == "design":
+        scope["boundary"] = "按题目约束自主提出方案、推导和取舍；缺少约束时明确合理假设，不要求资料中已有实现，不写成个人已完成的项目。"
+    if mode == "experience" and "graduation_date" in profile and "材料冲突" in profile:
+        scope["temporal_boundary"] = "毕业时间有冲突，当前毕业/在读状态未确认。自我介绍不能断言当前在读或已毕业，也不要推荐未经确认的在读话术；可陈述材料支持的研究方向与论文情况。"
+    return scope
+
+
+def scope_reference(question, reference):
+    reference = deepcopy(reference)
+    scope = answer_scope(question,reference.get("evidence",[]),reference.get("candidate_profile",""))
+    reference["answer_scope"] = scope
+    if scope["mode"] in {"technical","design"}:
+        reference["resume"] = ""
+        if not reference.get("evidence"):
+            reference["papers"] = ""
+    return reference
+
+
 def clarification_for(history: list[dict], candidate_speech: str = "") -> str | None:
     """Handle only standalone deictic questions with no conversational referent."""
     if not history or history[-1].get("role") != "user" or candidate_speech.strip():
@@ -126,7 +163,7 @@ def compose_context(system: str, reference: dict, history: list[dict], *,
         return messages
 
     original = {key: reference.get(key, "") for key in
-                ("resume", "papers", "jd", "candidate_speech", "enrichment")}
+                ("resume", "papers", "jd", "candidate_speech", "enrichment", "candidate_profile")}
     original.update(evidence=reference.get("evidence", []), history=recent,
                     ai_quick_suggestion=request.get("ai_quick_suggestion", "") if request else "")
     messages = render(original)
@@ -135,7 +172,7 @@ def compose_context(system: str, reference: dict, history: list[dict], *,
         return ContextPack(messages, original_chars, original_chars, max_chars, (), original["evidence"],
                            context_sources(json.loads(messages[1]["content"])))
 
-    weights = {"resume": 0.27, "candidate_speech": 0.10, "evidence": 0.27, "history": 0.18,
+    weights = {"resume": 0.20, "candidate_speech": 0.10, "evidence": 0.22, "history": 0.14,"candidate_profile":0.16,
                "jd": 0.06, "papers": 0.06, "enrichment": 0.04, "ai_quick_suggestion": 0.02}
     empty = {key: ([] if isinstance(value, list) else "") for key, value in original.items()}
     mandatory_chars = message_chars(render(empty, tuple(original)))
@@ -144,10 +181,15 @@ def compose_context(system: str, reference: dict, history: list[dict], *,
         raise ContextBudgetExceeded("当前问题或方向超过上下文预算，请缩短后重试；未发送模型请求")
     sizes = {key: len(json.dumps(value, ensure_ascii=False)) if isinstance(value, list) else len(value)
              for key, value in original.items()}
-    caps = {key: min(sizes[key], int(available * weight)) for key, weight in weights.items()}
+    profile_size = len(json.dumps(original["candidate_profile"],ensure_ascii=False)) - 2
+    if profile_size > available:
+        raise ContextBudgetExceeded("本人核对记录超过上下文预算，请增加模型上下文预算后重试；未发送模型请求")
+    caps = {key: min(sizes[key], int((available - profile_size) * weight / (1 - weights["candidate_profile"])))
+            for key,weight in weights.items() if key != "candidate_profile"}
+    caps["candidate_profile"] = profile_size
     remaining = available - sum(caps.values())
     for key in weights:
-        extra = min(remaining, sizes[key] - caps[key])
+        extra = max(0,min(remaining, sizes[key] - caps[key]))
         caps[key] += extra
         remaining -= extra
 

@@ -161,7 +161,7 @@
   .bub.me .who{color:#4ade80}
   .bub .live{font-size:11px;color:#888;margin-left:6px}
   .bub.me .okchip{display:block;margin-top:5px;font-size:10px;color:rgba(126,226,168,.55);
-    text-align:right;font-weight:400;letter-spacing:.3px}
+    text-align:right;font-weight:400;letter-spacing:0}
 
   /* 知识库管理面板 */
   #kbOverlay{
@@ -196,36 +196,49 @@
   #kbClose{float:right;background:none;border:none;color:var(--dim);font-size:18px;cursor:pointer}
 </style>
 <link rel="stylesheet" href="/static/workspace.css">
+<link rel="stylesheet" href="/static/app-shell.css">
 <script src="/static/vendor/lucide.js" defer></script>
 <script src="/static/js/desktop-pairing.js" type="module"></script>
 </head>
-<body>
-<header>
-  <span id="stateDot"></span>
-  <span class="title"><i data-lucide="audio-lines"></i>面试辅助</span>
-  <span id="resumeBadge" class="pill" style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">简历检测中…</span>
-  <button id="btnResume" class="tool" title="管理简历" aria-label="管理简历"><i data-lucide="file-user"></i></button>
-  <select id="deviceSel" title="面试官声音(系统回环)设备"><option value="">扬声器(默认)</option></select>
-  <select id="micSel" aria-label="本人麦克风" title="本人麦克风"><option value="default">本人 · 系统默认麦克风</option><option value="">关闭本人麦克风</option></select>
-  <button id="btnStart" class="primary"><i data-lucide="play"></i>监听</button>
-  <button id="btnStop" class="tool" disabled title="停止采集" aria-label="停止采集"><i data-lucide="pause"></i></button>
-  <button id="btnRecal" class="tool" title="重新校准" aria-label="重新校准"><i data-lucide="sliders-horizontal"></i></button>
-  <button id="btnClear" class="tool" title="新会话" aria-label="新会话"><i data-lucide="list-plus"></i></button>
-  <button id="btnKB" class="tool" title="资料库" aria-label="资料库"><i data-lucide="library"></i></button>
-  <button id="btnPhone" class="tool" title="手机显示" aria-label="手机显示"><i data-lucide="smartphone"></i></button>
-  <a href="/history" class="tool" title="历史复盘" aria-label="历史复盘"><i data-lucide="history"></i></a>
-  <a href="/settings" class="tool" title="模型设置" aria-label="模型设置"><i data-lucide="settings-2"></i></a>
-  <span id="previewBadge" class="pill" hidden>离线演示</span>
-  <div id="levelWrap">
-    <span class="pill" id="micDot" title="麦克风状态">🎤</span>
-    <div id="micBarOuter"><div id="micBar"></div></div>
-    <span class="pill" id="micDbLabel">-- dB</span>
-    <span class="lvlsep">│</span>
-    <span class="pill" id="dbLabel">🔊 --</span>
-    <div id="levelBarOuter"><div id="levelBar"></div></div>
-    <span class="pill" id="floorLabel" title="面试官通道">-floor -thr</span>
-  </div>
+<body class="workspace-page">
+<header class="app-header">
+  <a class="app-brand" href="/"><i data-lucide="audio-lines"></i>面试辅助</a>
+  <nav class="app-nav" aria-label="主导航">
+    <a href="/" aria-current="page"><i data-lucide="messages-square"></i>面试工作区</a>
+    <a id="btnKB" href="/files"><i data-lucide="library"></i>资料库</a>
+    <a href="/history"><i data-lucide="history"></i>历史复盘</a>
+    <a href="/settings"><i data-lucide="settings-2"></i>模型设置</a>
+  </nav>
+  <span id="previewBadge" class="preview-mark" hidden>离线演示</span>
 </header>
+
+<section class="capture-panel" aria-label="声音采集">
+  <div class="capture-heading"><h2>声音采集</h2><span class="capture-status" role="status"><span id="stateDot"></span><span id="captureStatus">未开启</span></span><button id="btnRefreshDevices" class="command subtle"><i data-lucide="refresh-cw"></i>刷新设备</button></div>
+  <div class="capture-controls">
+    <label class="device-control"><span><i data-lucide="headphones"></i>面试官 · 播放设备</span><select id="deviceSel" aria-label="面试官播放设备" title="会议软件播放声音的耳机、扬声器或声卡"><option value="">系统默认输出</option></select><small id="outputDeviceState">尚未采集</small></label>
+    <label class="device-control"><span><i data-lucide="mic"></i>我 · 麦克风输入</span><select id="micSel" aria-label="本人麦克风" title="本人麦克风"><option value="default">系统默认输入</option><option value="">关闭本人麦克风</option></select><small id="inputDeviceState">尚未采集</small></label>
+    <div class="capture-commands">
+      <button id="btnStart" class="command primary"><i data-lucide="play"></i>开始监听</button>
+      <button id="btnStop" class="command" disabled title="停止采集" aria-label="停止采集"><i data-lucide="pause"></i>暂停采集</button>
+      <button id="btnRecal" class="command subtle" title="重新校准" aria-label="重新校准"><i data-lucide="sliders-horizontal"></i>校准</button>
+    </div>
+  </div>
+  <div id="captureNotice" role="status" hidden></div>
+  <div id="levelWrap" class="capture-levels">
+    <span class="level-reading"><span>系统声音</span><span id="levelBarOuter"><span id="levelBar"></span></span><span id="dbLabel">-- dB</span></span>
+    <span class="level-reading"><span id="micDot">本人麦克风</span><span id="micBarOuter"><span id="micBar"></span></span><span id="micDbLabel">-- dB</span></span>
+    <span id="floorLabel" hidden></span>
+  </div>
+</section>
+
+<div class="session-toolbar">
+  <div class="session-title"><h1>实时面试</h1><span id="resumeBadge">简历检测中…</span></div>
+  <div class="session-commands">
+    <button id="btnResume" class="command subtle"><i data-lucide="file-user"></i>管理简历</button>
+    <button id="btnPhone" class="command"><i data-lucide="smartphone"></i>手机显示</button>
+    <button id="btnClear" class="command"><i data-lucide="list-plus"></i>新会话</button>
+  </div>
+</div>
 
 <div class="workspace">
 <aside class="question-nav" aria-label="当前会话题目">
@@ -234,17 +247,17 @@
 </aside>
 <main class="reader">
 <div id="feed">
-  <div class="sysmsg">等待新问题</div>
+  <div id="readerEmpty" class="reader-empty"><i data-lucide="messages-square"></i><span>等待新问题</span></div>
   <div id="selfBar" class="sysmsg" style="display:none;color:#7ee2a8"></div>
 </div>
 <button id="followLatest" hidden><i data-lucide="arrow-down"></i>回到最新</button>
 </main>
 </div>
 
-<footer>
-  <input id="manualInput" placeholder="输入问题…" aria-label="输入问题">
-  <button id="btnAsk" title="发送问题" aria-label="发送问题"><i data-lucide="arrow-up"></i></button>
-  <span class="pill" id="connectionState">连接中</span>
+<footer class="manual-composer">
+  <label for="manualInput">手动提问</label>
+  <div class="manual-field"><input id="manualInput" placeholder="输入面试问题…" aria-label="输入问题"><button id="btnAsk" title="发送问题" aria-label="发送问题"><i data-lucide="arrow-up"></i></button></div>
+  <span id="connectionState" role="status">连接中</span>
 </footer>
 
 <dialog id="phoneDialog" aria-labelledby="phoneTitle">
@@ -293,6 +306,9 @@ function resetSession(sessionId,announce=true){
   const selfBar=$('selfBar');
   $('feed').replaceChildren();
   if(selfBar){selfBar.style.display='none';selfBar.textContent='';$('feed').appendChild(selfBar);}
+  const empty=document.createElement('div');empty.id='readerEmpty';empty.className='reader-empty';
+  empty.innerHTML='<i data-lucide="messages-square"></i><span>等待新问题</span>';
+  $('feed').appendChild(empty);window.lucide?.createIcons();
   if(announce)addSys('已清空，开始新一轮');
 }
 
@@ -337,17 +353,38 @@ function updateDevices(select,devices,defaults){
   }
   select.value=selected;select.dataset.devices=signature;
 }
+function outputDefaults(devices){
+  const current=(devices||[]).find(device=>device.is_default);
+  return [['',current?'系统默认输出 · '+current.name:'系统默认输出']];
+}
+function inputDefaults(devices){
+  const current=(devices||[]).find(device=>device.is_default);
+  return [['default',current?'系统默认输入 · '+current.name:'系统默认输入'],['','关闭本人麦克风']];
+}
+function restoreCaptureSelection(select,engine,defaultValue){
+  const value=String(engine?.selection??defaultValue);
+  if(!Array.from(select.options).some(option=>option.value===value))select.add(new Option(engine?.device||'所选设备已断开',value));
+  select.value=value;
+}
 async function refreshState(){
   try{
     const r=await fetch('/api/state');if(!r.ok)throw new Error('状态获取失败');const s=await r.json();
     captureActive=!!(s.listening||s.self_listening);
+    $('captureStatus').textContent=s.listening&&s.self_listening?'双通道采集中':s.listening?'系统声音采集中':s.self_listening?'本人麦克风采集中':'未开启';
     $('btnStart').disabled=captureBusy||!!s.listening;$('btnStop').disabled=captureBusy||!captureActive;
+    $('btnRefreshDevices').disabled=captureBusy||captureActive;
+    $('btnRefreshDevices').title=captureActive?'暂停采集后刷新设备':'重新扫描耳机、扬声器和麦克风';
     $('previewBadge').hidden=!s.preview;
     const sel=$('deviceSel');
-    updateDevices(sel,s.devices,[['','扬声器(默认)']]);
+    updateDevices(sel,s.devices,outputDefaults(s.devices));
     const msel=$('micSel');
-    updateDevices(msel,s.input_devices,[['default','本人 · 系统默认麦克风'],['','关闭本人麦克风']]);
-    if(s.self_listening&&!captureBusy)msel.value=String(s.self_engine?.selection??'default');
+    updateDevices(msel,s.input_devices,inputDefaults(s.input_devices));
+    if(!captureBusy){
+      if(s.listening)restoreCaptureSelection(sel,s.engine,'');
+      if(s.self_listening)restoreCaptureSelection(msel,s.self_engine,'default');
+    }
+    $('outputDeviceState').textContent=s.listening?'采集中 · '+(s.engine?.device||'当前播放设备'):'尚未采集';
+    $('inputDeviceState').textContent=s.self_listening?'采集中 · '+(s.self_engine?.device||'当前麦克风'):'尚未采集';
     // 麦克风电平条 + 状态
     if(s.self_engine){
       fmtMicLevel(s.self_engine.last_level_db ?? -100,
@@ -365,13 +402,11 @@ async function refreshState(){
     if(s.resume){
       const b=$('resumeBadge');
       if(s.resume.loaded){
-        b.textContent='📄 '+((s.resume.source||'').slice(0,16))+' · '+(s.resume.chars||0)+'字';
+        b.textContent='简历 · '+(s.resume.source||'已加载');
         b.style.color='var(--green)';
         b.title='来源: '+(s.resume.origin||s.resume.source)+'\n加载于 '+(s.resume.loaded_at||'')+'\nAI 作答将引用这份简历的真实项目与数据';
-        if(!window._resumeAnnounced){window._resumeAnnounced=true;
-          addSys('✅ 简历基础环境已校准: '+s.resume.source+'('+s.resume.chars+'字)');}
       }else{
-        b.textContent='⚠ 简历未加载';b.style.color='var(--red)';b.title='点「换简历」重试';
+        b.textContent='简历未加载';b.style.color='var(--accent)';b.title='管理简历';
       }
     }
     if(s.listening){
@@ -426,6 +461,7 @@ function renderDirs(qaEl,dirs,allowFull=true){
 
 /* ---------- 两级事件流 ---------- */
 function addBubble(text, who, side, ts){
+  $('readerEmpty')?.remove();
   /* who: '面试官'/'我'; side: ir左/me右
      我的语音 = 纯历史记录：只加『✓已记入上下文』角标，永不附带 AI 回复 */
   const row=document.createElement('div');
@@ -439,6 +475,7 @@ function addBubble(text, who, side, ts){
 }
 
 function beginQA(q,ts,event){
+  $('readerEmpty')?.remove();
   curQA={};
   const qa=document.createElement('div');qa.className='qa';
   qa.dataset.turnId=event.turn_id;
@@ -499,11 +536,12 @@ function renderAnswer(target,content,status,error='',answerDoc=null){
     const actions=document.createElement('div');actions.className='answer-actions';
     target.stateLabel=document.createElement('span');target.stateLabel.className='answer-state';
     target.cancelButton=document.createElement('button');target.cancelButton.className='cancel-generation';
-    target.cancelButton.type='button';target.cancelButton.textContent='■';
+    target.cancelButton.type='button';target.cancelButton.innerHTML='<i data-lucide="square"></i><span>取消生成</span>';
     target.cancelButton.title='取消生成';target.cancelButton.setAttribute('aria-label','取消生成');
     target.cancelButton.onclick=()=>cancelGeneration(target);
     actions.append(target.stateLabel,target.cancelButton);
     target.box.replaceChildren(target.body,actions);
+    window.lucide?.createIcons();
   }
   const body=target.body;
   target.box.classList.toggle('pending',status==='pending');
@@ -651,6 +689,14 @@ function connectSSE(){
       lastQuestion=ev.question||'';
       const anchor=window._pendingBub;window._pendingBub=null;
       const qa=qaByTurn.get(ev.turn_id)||beginQA(lastQuestion,ev.at||'',ev);
+      if(qa.generation!==ev.generation){
+        for(const [id,target] of taskTargets)if(target.qa===qa)taskTargets.delete(id);
+        for(const sub of qa.subs.values())sub.el.remove();qa.subs.clear();
+        qa.generation=ev.generation;qa.status='pending';
+        qa.el.querySelector('.qbox').innerHTML=`<span class="t">${esc(ev.at||'')}</span>${md(lastQuestion)}`;
+        for(const link of $('questionList').children)if(link.dataset.turnId===ev.turn_id)link.querySelector('.nav-label').textContent=lastQuestion;
+        qa.el.querySelector('.dirrow')?.remove();
+      }
       const target={qa,box:qa.card,raw:'',level:'quick',taskId:ev.task_id,attempt:0,model:''};
       taskTargets.set(ev.task_id,target);renderAnswer(target,'','pending');
       if(anchor?.isConnected){
@@ -718,8 +764,9 @@ async function captureRequest(action,source,selection){
 async function captureAction(work){
   if(captureBusy)return;
   captureBusy=true;
-  for(const id of ['btnStart','btnStop','micSel','deviceSel'])$(id).disabled=true;
-  try{await work();}catch(error){addSys(error.message,true);}
+  $('captureNotice').hidden=true;$('captureNotice').classList.remove('error');
+  for(const id of ['btnStart','btnStop','micSel','deviceSel','btnRefreshDevices'])$(id).disabled=true;
+  try{await work();}catch(error){$('captureNotice').textContent=error.message;$('captureNotice').hidden=false;$('captureNotice').classList.add('error');}
   finally{
     captureBusy=false;$('micSel').disabled=false;$('deviceSel').disabled=false;
     await refreshState();
@@ -739,6 +786,21 @@ $('btnStop').onclick=async()=>{
 };
 $('micSel').onchange=()=>{if(captureActive)captureAction(()=>captureRequest($('micSel').value===''?'stop':'start','mic',$('micSel').value));};
 $('deviceSel').onchange=()=>{if(captureActive)captureAction(()=>captureRequest('start','loopback',$('deviceSel').value));};
+$('btnRefreshDevices').onclick=()=>captureAction(async()=>{
+  const selections=[['deviceSel','devices','',outputDefaults],['micSel','input_devices','default',inputDefaults]].map(([id,key,fallback,defaults])=>{
+    const select=$(id),previous=JSON.parse(select.dataset.devices||'[]').find(device=>String(device.index)===select.value);
+    return {select,key,fallback,defaults,previous,value:select.value};
+  });
+  const response=await fetch('/api/audio/devices/refresh',{method:'POST'}),value=await response.json();
+  if(!response.ok||!value.ok)throw new Error(value.error||'设备刷新失败');
+  for(const item of selections){
+    const devices=value[item.key]||[];
+    updateDevices(item.select,devices,item.defaults(devices));
+    const matches=item.previous?devices.filter(device=>device.name===item.previous.name&&device.hostapi===item.previous.hostapi):[];
+    item.select.value=item.previous?(matches.length===1?String(matches[0].index):item.fallback):item.value;
+  }
+  $('captureNotice').textContent='设备列表已刷新';$('captureNotice').hidden=false;
+});
 $('btnRecal').onclick=()=>fetch('/api/recalibrate',{method:'POST'});
 $('btnResume').onclick=()=>{location.href='/files?kind=resume';};
 $('btnClear').onclick=async()=>{

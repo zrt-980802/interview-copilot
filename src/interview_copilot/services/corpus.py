@@ -114,6 +114,10 @@ def clip_evidence(item: dict, max_chars: int) -> dict:
     return clipped
 
 
+def _passage_key(row):
+    return row["source"], row["line_start"], row["line_end"], row["excerpt"]
+
+
 class CorpusIndex:
     def __init__(self):
         self._lock = threading.RLock()
@@ -127,6 +131,7 @@ class CorpusIndex:
         self._status = {"loading": False, "ready": False, "files": 0, "failed": 0,
                         "skipped": 0, "chunks": 0, "closed": False}
         self._sync_lock = threading.Lock()
+        self.semantic = None
 
     def update_documents(self, bucket: str, documents: list[dict], *, cancelled=None):
         """Replace changed sources and remove deleted sources in one transaction."""
@@ -143,19 +148,22 @@ class CorpusIndex:
                     seen.add(doc_id)
                     full = _SECRET.sub("[REDACTED]", document["text"])
                     fingerprint = hashlib.sha256(json.dumps(
-                        [full, document["source"], document.get("title", ""), document.get("kind", "reference")],
+                        [full, document["source"], document.get("title", ""), document.get("kind", "reference"),
+                         document.get("search_text"),document.get("lines"),document.get("heading")],
                         ensure_ascii=False).encode()).hexdigest()
                     if self._fingerprints.get(doc_id) == fingerprint:
                         continue
                     self._db.execute("DELETE FROM passages WHERE doc_id = ?", (doc_id,))
-                    for part in passages(full):
+                    parts = ([Passage(document.get("heading",""),*document["lines"],full)]
+                             if "lines" in document else passages(full))
+                    for part in parts:
                         if cancelled is not None and cancelled.is_set():
                             raise _SyncCancelled()
                         if not _substantive(part.text):
                             continue
                         title = document.get("title") or Path(document["source"]).stem
                         self._db.execute("INSERT INTO passages VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (
-                            " ".join(terms(title)), " ".join(terms(part.heading)), " ".join(terms(part.text)),
+                            " ".join(terms(title)), " ".join(terms(part.heading)), " ".join(terms(document.get("search_text",part.text))),
                             doc_id, document["source"], title, part.heading,
                             document.get("kind", "reference"), part.line_start, part.line_end, part.text, bucket))
                     fingerprints[doc_id] = fingerprint
@@ -233,20 +241,51 @@ class CorpusIndex:
         with self._lock:
             if self._status["closed"]:
                 return []
+            titles = self._db.execute("SELECT DISTINCT doc_id,title FROM passages").fetchall()
+            named_docs = {row["doc_id"] for row in titles if anchors.intersection(terms(row["title"]))}
+            title_anchors = set().union(*(anchors.intersection(terms(row["title"])) for row in titles))
             rows = self._db.execute("""SELECT *, bm25(passages, 6.0, 3.0, 1.0) AS rank
                 FROM passages WHERE passages MATCH ? ORDER BY rank, source, line_start LIMIT 40""", (query,)).fetchall()
             if anchors:
                 anchor_query = " OR ".join('"' + token.replace('"', '""') + '"' for token in sorted(anchors))
                 rows += self._db.execute("""SELECT *, bm25(passages, 6.0, 3.0, 1.0) AS rank
                     FROM passages WHERE passages MATCH ? ORDER BY rank, source, line_start LIMIT 40""", (anchor_query,)).fetchall()
-        unique = {(row["doc_id"], row["line_start"], row["line_end"], row["excerpt"]): row for row in rows}
+        unique = {}
+        for row in rows:
+            key = (row["doc_id"],row["line_start"],row["line_end"],row["excerpt"])
+            if key not in unique or row["rank"] < unique[key]["rank"]:
+                unique[key] = row
         # A shared document title must not pull every section into a named-concept question.
+        content_anchors = anchors - title_anchors
         focused = [row for row in unique.values()
-                   if anchors.intersection(terms(row["excerpt"] + " " + row["heading"].rsplit(" / ", 1)[-1]))]
+                   if content_anchors.intersection(terms(row["excerpt"] + " " + row["heading"].rsplit(" / ", 1)[-1]))]
         candidates = focused or list(unique.values())
         # Named technologies should outrank broad topic words in mixed-language queries.
         rows = sorted(candidates, key=lambda row: (
-            -len(anchors.intersection(terms(row["excerpt"]))), row["rank"], row["source"], row["line_start"]))
+            -len(content_anchors.intersection(terms(row["excerpt"]))), row["rank"], row["source"], row["line_start"]))
+        distinct = {}
+        for row in rows:
+            distinct.setdefault(_passage_key(row), row)
+        rows = list(distinct.values())
+        if self.semantic is not None:
+            semantic_question = question
+            for anchor in title_anchors:
+                semantic_question = re.sub(r"(?<![a-z0-9])" + re.escape(anchor) + r"(?![a-z0-9])", " ", semantic_question, flags=re.I)
+            if not terms(semantic_question):
+                semantic_question = question
+            semantic_rows = self.semantic.search(semantic_question.strip())
+            scores, combined = {}, {}
+            for weight, ranking in ((1.0,rows),(0.85,semantic_rows)):
+                distinct = {}
+                for row in ranking:
+                    distinct.setdefault(_passage_key(row), row)
+                for rank,row in enumerate(distinct.values(),1):
+                    key = _passage_key(row)
+                    combined[key] = row
+                    scores[key] = scores.get(key,0) + weight / (60 + rank)
+            rows = [combined[key] for key in sorted(scores,key=lambda key:(-scores[key],key))]
+        if named_docs:
+            rows = [row for row in rows if row["doc_id"] in named_docs]
         results, counts = [], {}
         source_limit = limit if len({candidate["source"] for candidate in rows}) == 1 else 2
         for row in rows:
