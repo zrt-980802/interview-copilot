@@ -1,4 +1,4 @@
-"""In-memory, single-use pairing and revocable grants for one active session."""
+"""In-memory pairing with revocable device grants that follow the active session."""
 
 from collections import deque
 from dataclasses import dataclass
@@ -79,6 +79,17 @@ class MobileAccess:
         with self._lock:
             if isinstance(token, str):
                 self._grants.pop(self._digest(token), None)
+
+    def follow_session(self, previous, current):
+        """Move paired devices without extending their original authorization TTL."""
+        with self._lock:
+            self._prune()
+            self._grants = {
+                key: Grant(current, grant.expires_at) if grant.session_id == previous else grant
+                for key, grant in self._grants.items()
+            }
+            self._code = None
+            self._session = None
 
     def revoke_all(self):
         with self._lock:

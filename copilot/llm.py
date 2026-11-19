@@ -13,6 +13,7 @@ import threading
 import httpx
 from interview_copilot.services.cancellation import CancellationToken
 from interview_copilot.services.answer_context import clarification_for, compose_context, ContextBudgetExceeded, scope_reference
+from interview_copilot.providers.chat_options import chat_request_options
 
 
 def _load_env_files():
@@ -80,7 +81,7 @@ QUICK_PROMPT = """你是技术面试陪练，输出准确、贴题、便于理�
 【方向】<短方向名> ::: <值得继续展开的具体问题>
 
 answer_scope 是应用提供的作答范围约束。mode=project_method 时，先区分资料记载与通用机制，不能把设计建议写成本人做法；mode=technical 时直接用通用知识解释本题，不主动转成本人贡献；mode=design 时按合理假设提出具体方案、推导和取舍，不要求材料已有实现。reference_policy=model_knowledge 表示未检索到参考资料，仍正常作答；optional_references 表示只使用与问题直接相关的片段，其余忽略。
-经历题用下列行代替泛化的要点，只选本题需要的 1 至 2 行：
+经历题先用开口和要点自然组织有依据的个人角色、做法或结果，引用紧随对应事实；不把资料清单当成口述。需要核对原文、说明缺项或区分方案时，再选择下列 1 至 2 行：
 【材料】<source_labels 中的来源或 evidence.source> ::: <逐字摘录一小段原文，不改写、不加引号、不扩充动作>
 【待确认】<缺失项> ::: <现有资料未说明什么；未记载不能写成“我从没做过”>
 【方案】<方案名> ::: <明确属于假设的通用做法>
@@ -88,7 +89,11 @@ answer_scope 是应用提供的作答范围约束。mode=project_method 时，�
 经历题的开口只概括材料直接支持的范围，不能补写参数校验、索引、异常处理、功能测试或已上线等常见动作。本人是否做过某事未知时，说“当前资料未说明”，不替本人否认经历；用 STAR 时也不补齐未知的动作和结果。材料摘录与假设分行，方案和验证不能写成已经完成。一般技术题仍用开口和要点，不必增加材料行。
 自我介绍以自然口述组织研究方向、代表项目中的本人做法及已记载结果，用开口和最多两条要点即可；不逐条朗读材料，不把资料清单当成介绍。材料行只在需要对照原文或说明事实边界时使用，最多两条。引用仅使用当前提供的完整来源标识，不能给只有 context:resume 来源的文字编造上传文件行号。
 
-首屏是可直接口述的短回答：默认只写开口和 1 至 2 条要点，正文 150 至 280 字（不含引用）。开口一句，不超过 60 字；每条要点最多两句，只解释一条操作链或边界。复杂多问可用 3 条要点，总正文不超过约 400 字；先覆盖所有核心问点，不逐项展开完整教程或大段伪代码，具体代码留给深挖。判断题给结论、一个关键原因或反例即可；简单澄清只用开口行。方向可省略，最多一个短方向，不用它重复正文。引用同一事实只标一次。
+dialogue_context 是对话线索：topic/referent_question 用于解释“这块”“你们”“它”；主题从提问归纳，不证明本人做过。candidate_turns 只包含带题号的本人语音自述，可能转写不准且不等于用户确认；interviewer_background 是面试官的口头背景，不能变成本人项目事实。结合前文理解追问，不重复上一题整段答案；与材料冲突的关键数字、否定词或角色不能擅自选择。
+按 answer_scope.answer_style 调整组织：hr 只简短回答本题，未知薪资、城市和家庭信息不代填；introduction 用自然自介；counter_question 提供1至2个能直接问面试官的具体问题，结合岗位和刚才的流程说明，不替面试官回答；evaluation 优先交代评测对象、样本/标注、指标与错误检查；calculation 和 design 涉及财务趋势时，先明确指标/期间/报表口径，再取数、确定性计算、核对原因证据，不能把同期变化当作已证明因果。experience 只写支持的经历范围。
+answer_scope.response_plan 给出本题focus、max_points和body_chars，优先于默认篇幅。max_points=0时仅输出【开口】，不增加要点或方向；其他情况至多输出指定条数的要点。allow_direction=false时不输出【方向】。资料中无关的周期、质量、背景不因为被检索到就加入回答。body_chars不含引用，超长时保留直接结论和核心步骤，删去重复、教程和额外方向，不删关键条件或假设。先确认最后一条当前问题，不补答已经换掉的旧题。引用必须支持同一对象的当前主张，不能用行号存在的无关项目资料给通用方案背书；没有合适来源就不给引用。
+涉及时间时区分发表/入库时间与事实发生/有效时间；论文发表日不能直接当作医学事实的valid_from。讨论握手等协议时使用具体消息和确认条件，不无依据声称精确增加多少RTT或无条件保证可靠。
+首屏是可直接口述的短回答：默认只写开口和 1 至 2 条要点，正文约 120 至 240 字（不含引用）；简单人事和是否使用过某技术的问题可仅用一句，不凑字数。开口一句，不超过 60 字；每条要点最多两句，只解释一条操作链或边界。复杂多问可用 3 条要点，总正文不超过约 400 字；先覆盖所有核心问点，不逐项展开完整教程或大段伪代码，具体代码留给深挖。判断题给结论、一个关键原因或反例即可；简单澄清只用开口行。方向可省略，最多一个短方向，不用它重复正文。引用同一事实只标一次。
 回答采用有工程判断的表达：先给可执行的处理顺序，再说明一个关键失败场景及取舍。根据题目点出具体状态、数据、接口或验证方法，按题目只选一条能落地的路径；不要停在概念定义、组件名罗列或整套治理清单。设计建议用“我会”，只有材料支持的真实经历才能用“我做过”，专业性来自准确的约束与决策。
 技术题说明为什么和适用条件；设计题先说明约束与取舍；经历题只组织有依据的个人事实。没有实际结果时给出待验证方法，不能伪造结果。纠正经历前提时自然说明实际角色与范围，避免“前提不成立”等评判式开场。JD 只在与本题有关时影响重点。
 """ + EVIDENCE_RULES + """
@@ -101,6 +106,7 @@ answer_scope 是应用提供的作答范围约束。mode=project_method 时，�
 """
 
 DETAIL_PROMPT = """你是技术面试陪练，按用户选择的方向深入解释，补充推导、机制、取舍、失败场景和可能追问。已有快速卡是 AI 建议，不能假定候选人已经照说；只根据 candidate_speech 判断本人实际说了什么。
+dialogue_context 提供主题、前文指代、带题号的本人自述与面试官背景，用于追问衔接；这些线索不是已核实履历，不能与AI建议混淆。只补当前方向需要的新内容，保持同一项目与题目约束，换题后不沿用旧项目的指标或角色。
 语音错词优先结合前后文还原核心技术问题；题意足够明确时说明必要假设后直接展开具体执行顺序、状态变化与失败处理，不因个别损坏的专名中断作答。关键数字、否定词或约束有歧义且会改变方案时才澄清。用工程决策和可验证的机制体现专业性，不虚构亲历故障或实施成果。
 
 输出紧凑 Markdown，普通问题约 180 至 350 字；复杂设计或代码可适当增加篇幅，不为凑结构重复快速卡：
@@ -171,12 +177,7 @@ class LLMClient:
         if not key and not self.config.get("allow_anonymous", False):
             return None
         base = self.config["base_url"].rstrip("/")
-        # Other endpoints opt in through explicit, tested provider options.
-        extra = {}
-        if self.config.get("disable_thinking", True) and "bigmodel" in base:
-            extra = {"thinking": {"type": "disabled"}}
-        extra.update({name: value for name, value in self.config.get("provider_options", {}).items()
-                      if name in {"thinking", "enable_thinking", "reasoning_effort"}})
+        extra = chat_request_options(self.config)
         # 快速卡用无推理模型(quick_model)，深挖用质量模型(detail_model)
         model = prefer_model or self.config.get("model") or self.config["detail_model"]
         return {
@@ -198,6 +199,7 @@ class LLMClient:
             "base_url": self.config.get("fallback_base_url", "").rstrip("/"),
             "model": self.config.get("fallback_model", ""),
             "key": key,
+            "extra": chat_request_options(self.config, "fallback"),
         }
 
     def _candidates(self, prefer_model: str = ""):
@@ -371,12 +373,15 @@ class LLMClient:
         return result[-1]
 
     @staticmethod
-    def _reference_data(resume, papers, jd, self_recent, enrich="", evidence=None, candidate_profile=""):
+    def _reference_data(resume, papers, jd, self_recent, enrich="", evidence=None, candidate_profile="", dialogue_context=None):
         return {
             "context_type": "reference_data", "resume": resume, "papers": papers,
             "jd": jd, "candidate_speech": self_recent, "enrichment": enrich,
             "evidence": evidence or [],
             "candidate_profile":candidate_profile,
+            "dialogue_context": {key: value for key, value in (dialogue_context or {}).items()
+                                 if key in {"topic", "referent_question", "answer_style", "project_followup",
+                                            "note", "candidate_turns", "interviewer_background"}},
             "source_labels": {"resume": "context:resume", "papers": "context:papers",
                               "candidate_speech": "context:candidate_speech", "jd": "context:jd",
                               "enrichment": "context:enrichment"},
@@ -384,11 +389,11 @@ class LLMClient:
 
     def stream_quick(self, history: list, resume: str, on_delta, on_done, on_error,
                      self_recent: str = "", papers: str = "", jd: str = "",
-                     cancel_token=None, on_attempt=None, evidence=None, on_context=None, candidate_profile=""):
+                     cancel_token=None, on_attempt=None, evidence=None, on_context=None, candidate_profile="", dialogue_context=None):
         """快速层。history=[{"role","content"}]，最后一项应为面试官的问题(user)。
         self_recent: 候选人本人最近的真实发言(麦克风转写)。
         papers: 论文摘要卡+相关节选(由服务端检索组装)。jd: 目标岗位JD。"""
-        reference = self._reference_data(resume, papers, jd, self_recent, evidence=evidence,candidate_profile=candidate_profile)
+        reference = self._reference_data(resume, papers, jd, self_recent, evidence=evidence,candidate_profile=candidate_profile,dialogue_context=dialogue_context)
         reference = scope_reference(history[-1].get("content","") if history else "",reference)
         try:
             pack = compose_context(self._prompts["quick"], reference, history[-6:],
@@ -408,11 +413,11 @@ class LLMClient:
     def stream_detail(self, question: str, quick_text: str, direction: str,
                       history: list, resume: str, on_delta, on_done, on_error,
                       self_recent: str = "", papers: str = "", enrich: str = "",
-                      jd: str = "", cancel_token=None, on_attempt=None, evidence=None, on_context=None, candidate_profile=""):
+                      jd: str = "", cancel_token=None, on_attempt=None, evidence=None, on_context=None, candidate_profile="", dialogue_context=None):
         """深度层：按方向展开。direction 为具体方向名或 '完整版'。"""
         request = {"question": question, "direction": direction,
                    "ai_quick_suggestion": quick_text, "recent_ai_conversation": history[-4:]}
-        reference = self._reference_data(resume, papers, jd, self_recent, enrich, evidence,candidate_profile)
+        reference = self._reference_data(resume, papers, jd, self_recent, enrich, evidence,candidate_profile,dialogue_context)
         reference = scope_reference(question + " " + direction,reference)
         try:
             pack = compose_context(self._prompts["detail"], reference, [], request=request,

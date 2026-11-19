@@ -48,7 +48,8 @@ from interview_copilot.services.documents import DocumentLibrary, DocumentError,
 from interview_copilot.services.knowledge import KnowledgeStore
 from interview_copilot.services.semantic import SemanticIndex
 from interview_copilot.services.answer_context import _evidence_within
-from interview_copilot.services.question_flow import is_non_question, looks_unfinished, is_continuation
+from interview_copilot.services.question_flow import is_non_question, looks_unfinished, is_continuation, is_background
+from interview_copilot.services.dialogue import evidence_queries
 from interview_copilot.services.remote_documents import download_github
 from interview_copilot.services.provider_settings import ProviderSettings, ProviderSettingsError, probe_provider
 from interview_copilot.legacy.mobile import create_mobile_app
@@ -173,22 +174,39 @@ def resume_text() -> str:
         return "(简历未提供)"
 
 
-def answer_evidence(question: str, *, detail=False) -> list[dict]:
+def answer_evidence(question: str, *, detail=False, dialogue=None) -> list[dict]:
     index = _RUNTIME.corpus
     for bucket, store in (("papers", knowledge), ("materials", mat_store)):
         index.update_documents(bucket, getattr(store, "corpus_documents", lambda: [])())
     _RUNTIME.library.sync_index()
     budget = CFG.get("corpus", {}).get("detail_budget_chars" if detail else "quick_budget_chars",
                                        4000 if detail else 2400)
-    retrieved = index.search(question, budget=budget, limit=5 if detail else 3)
+    queries = evidence_queries(question, dialogue)
+    rankings = [index.search(query, budget=budget, limit=5 if detail else 3) for query in queries]
+    retrieved, seen = [], set()
+    for position in range(max(map(len, rankings), default=0)):
+        for ranking in rankings:
+            if position >= len(ranking):
+                continue
+            item = ranking[position]
+            key = (item["source"], tuple(item["lines"]), item["excerpt"])
+            if key not in seen:
+                retrieved.append(item)
+                seen.add(key)
     knowledge_store = getattr(_RUNTIME,"knowledge",None)
     if knowledge_store:
-        facts = knowledge_store.evidence(question,limit=3 if detail else 2)
+        facts, fact_keys = [], set()
+        for query in queries:
+            for item in knowledge_store.evidence(query,limit=3 if detail else 2):
+                key = (item["source"], tuple(item["lines"]), item["excerpt"])
+                if key not in fact_keys:
+                    facts.append(item)
+                    fact_keys.add(key)
         retrieved = knowledge_store.annotate(retrieved)
         seen = {(item["source"],tuple(item["lines"]),item["excerpt"]) for item in facts}
         retrieved = facts + [item for item in retrieved if (item["source"],tuple(item["lines"]),item["excerpt"]) not in seen]
         return _evidence_within(retrieved,budget)
-    return retrieved
+    return _evidence_within(retrieved,budget)
 
 
 def jd_text() -> str:
@@ -342,6 +360,11 @@ class QuestionMerger:
             return
         if is_non_question(text):
             return
+        if is_background(text):
+            with _INTERVIEW_LOCK:
+                if SESSIONS and _SESSION_ID:
+                    SESSIONS.note_background(_SESSION_ID, text)
+            return
         now = time.time()
         extended = None
         with self.lock:
@@ -460,17 +483,19 @@ def spawn_quick(question: str, context: TaskContext, self_recent: str = ""):
     history = [{"role": role, "content": text} for role, text in SESSIONS.history(context)]
     callbacks = _callbacks(context, started)
     token = sessions.cancellation(context)
+    dialogue = sessions.dialogue(context)
 
     def work():
         if not rt.ready or not sessions.is_active(context):
             return
         try:
-            resume, evidence, jd = resume_text(), answer_evidence(question), jd_text()
+            resume, evidence, jd = resume_text(), answer_evidence(question, dialogue=dialogue), jd_text()
             if not rt.ready or not sessions.is_active(context):
                 return
             llm.stream_quick(history, resume, *callbacks[:3],
                              self_recent=self_recent, evidence=evidence, jd=jd,
                              candidate_profile=rt.knowledge.profile() if rt.knowledge else "",
+                             dialogue_context=dialogue,
                              cancel_token=token, on_attempt=callbacks[3], on_context=callbacks[4])
         except StreamCancelled:
             pass
@@ -496,13 +521,15 @@ def spawn_detail(direction: str, turn_id: str | None = None):
         callbacks = _callbacks(context, time.time())
         token = sessions.cancellation(context)
         broadcast(_task_event(context, "detail_start", at=time.strftime("%H:%M:%S")))
+        dialogue = sessions.dialogue(context)
 
     def work():
         if not rt.ready or not sessions.is_active(context):
             return
         try:
             resume = resume_text()
-            evidence = answer_evidence(turn.question + " " + direction, detail=True)
+            detail_dialogue = {**dialogue, "retrieval_query": dialogue.get("retrieval_query", turn.question) + " " + direction}
+            evidence = answer_evidence(turn.question + " " + direction, detail=True, dialogue=detail_dialogue)
             enrich = enrichment_context(context, turn.question + " " + direction)
             if not rt.ready or not sessions.is_active(context):
                 return
@@ -510,6 +537,7 @@ def spawn_detail(direction: str, turn_id: str | None = None):
                               *callbacks[:3], self_recent=self_recent,
                               evidence=evidence, enrich=enrich, jd=jd_text(),
                               candidate_profile=rt.knowledge.profile() if rt.knowledge else "",
+                              dialogue_context=dialogue,
                               cancel_token=token, on_attempt=callbacks[3], on_context=callbacks[4])
         except StreamCancelled:
             pass
@@ -568,6 +596,7 @@ def _on_event(**ev):
             if ev.get("speaker") == "self":
                 CONV.add(ev.get("text", ""))
                 SELF_TURN.note(ev.get("text", ""))
+                SESSIONS.note_candidate_speech(_SESSION_ID, ev.get("text", ""))
                 if not is_non_question(ev.get("text","")):
                     MERGER.end_continuation()
                 return
@@ -1052,7 +1081,7 @@ async def clear():
             ENGINE.invalidate_pending()
             SELF_ENGINE.invalidate_pending()
             SESSIONS.end_session(_SESSION_ID)
-            MOBILE_ACCESS.revoke_all()
+            previous_session = _SESSION_ID.value
             CONV.clear()
             SELF_TURN.clear()
             history_store.session_end(session_id=_DB_SESSION_ID)
@@ -1060,6 +1089,7 @@ async def clear():
             _RUNTIME.session_id = _DB_SESSION_ID
             _SESSION_ID = SessionId(str(_DB_SESSION_ID) if _DB_SESSION_ID is not None else uuid4().hex)
             SESSIONS.create_session(_SESSION_ID)
+            MOBILE_ACCESS.follow_session(previous_session, _SESSION_ID.value)
             broadcast({"type": "session_reset", "session_id": _SESSION_ID.value})
             return {"ok": True, "session_id": _SESSION_ID.value}
     return await asyncio.to_thread(reset)

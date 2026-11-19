@@ -35,6 +35,18 @@ def context_sources(reference: dict) -> list[dict]:
             sources.append({"id": "context:" + field, "source": "context:" + field,
                             "kind": kind, "heading": "", "excerpt": text,
                             "partial": field in reference.get("context_coverage", {}).get("partial_fields", [])})
+    dialogue = reference.get("dialogue_context", {})
+    conversation = []
+    if dialogue.get("topic"):
+        conversation.append("提问主题线索：" + dialogue["topic"])
+    if dialogue.get("referent_question"):
+        conversation.append("前文问题：" + dialogue["referent_question"])
+    conversation.extend("面试官口头说明：" + text for text in dialogue.get("interviewer_background", []))
+    conversation.extend("本人语音自述（未经核实）：" + item["text"] for item in dialogue.get("candidate_turns", []))
+    if conversation:
+        sources.append({"id": "context:dialogue", "source": "context:dialogue", "kind": "reference",
+                        "heading": "对话线索（非已确认经历）",
+                        "excerpt": "\n".join(conversation)})
     sources.extend(deepcopy(reference.get("evidence", [])))
     return sources
 

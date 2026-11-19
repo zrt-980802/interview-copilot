@@ -53,6 +53,21 @@ def test_session_key_and_clear_prevent_environment_fallback(store,monkeypatch):
     assert store.public()["key_source"] == "none"
 
 
+def test_inventory_counts_complete_services_and_preserves_disabled_configuration(store):
+    assert store.public()["provider_summary"]["configured_count"] == 0
+    store.save(store.prepare({"allow_anonymous":True}))
+    summary = store.public()["provider_summary"]
+    assert (summary["configured_count"],summary["enabled_count"],summary["capacity"]) == (1,1,2)
+    store.save(store.prepare({"fallback_enabled":True,"fallback_api_key":"synthetic-backup","remember":False}))
+    assert store.public()["provider_summary"]["enabled_count"] == 2
+    store.save(store.prepare({"fallback_enabled":False}))
+    summary = store.public()["provider_summary"]
+    assert (summary["configured_count"],summary["enabled_count"]) == (2,1)
+    assert summary["slots"][1] == {"channel":"fallback","configured":True,"enabled":False}
+    store.save(store.prepare({"clear_fallback_api_key":True}))
+    assert store.public()["provider_summary"]["configured_count"] == 1
+
+
 @pytest.mark.skipif(sys.platform != "win32",reason="Windows DPAPI")
 def test_replacing_saved_key_with_session_key_removes_old_persisted_key(store):
     store.save(store.prepare({"api_key":"old-saved-key"}))
@@ -101,6 +116,7 @@ def test_unreadable_key_remains_unavailable_after_unrelated_save(store):
     store.save(store.prepare({"quick_model":"new-model"}))
     assert store.public()["key_source"] == "unavailable"
     assert not store.public()["key_set"]
+    assert store.public()["provider_summary"]["configured_count"] == 0
 
 
 def test_probe_uses_only_selected_credentials_and_synthetic_message(store):
@@ -136,3 +152,17 @@ def test_anonymous_probe_does_not_send_authorization(store):
         return httpx.Response(200,json={"choices":[{"message":{"content":"OK"}}]})
     asyncio.run(probe_provider(store.prepare({"allow_anonymous":True}),transport=httpx.MockTransport(respond)))
     assert "authorization" not in seen[0].headers
+
+
+@pytest.mark.parametrize("channel",["primary","fallback"])
+def test_glm_probe_disables_thinking_for_both_channels(store,channel):
+    seen = []
+    change = store.prepare({"base_url":"https://open.bigmodel.cn/api/paas/v4",
+                            "fallback_base_url":"https://open.bigmodel.cn/api/paas/v4",
+                            "allow_anonymous":True,"fallback_allow_anonymous":True,"fallback_enabled":True})
+    def respond(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200,json={"choices":[{"message":{"content":"OK"}}]})
+    assert asyncio.run(probe_provider(change,channel=channel,transport=httpx.MockTransport(respond)))["ok"]
+    assert seen[0]["thinking"] == {"type":"disabled"}
+    assert seen[0]["messages"] == [{"role":"user","content":"Reply with OK."}]

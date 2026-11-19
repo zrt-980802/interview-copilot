@@ -76,7 +76,7 @@ def test_unauthorized_reads_and_management_routes_are_unavailable(legacy_server)
     assert phone.post("/api/ask", json={"text": "forbidden"}).status_code == 404
 
 
-def test_code_expiry_logout_revoke_and_clear_invalidate_access(legacy_server):
+def test_logout_and_revoke_invalidate_access_but_new_session_preserves_pairing(legacy_server):
     desktop, phone = clients(legacy_server)
     pair(desktop, phone)
     assert desktop.get("/api/mobile").json()["devices"] == 1
@@ -87,8 +87,15 @@ def test_code_expiry_logout_revoke_and_clear_invalidate_access(legacy_server):
     assert phone.get("/api/snapshot").status_code == 401
     pair(desktop, phone)
     old_code = desktop.post("/api/mobile/pairing").json()["code"]
-    desktop.post("/api/clear")
-    assert phone.get("/api/snapshot").status_code == 401
+    token = phone.cookies.get(COOKIE)
+    previous = phone.get("/api/snapshot").json()["session_id"]
+    current = desktop.post("/api/clear").json()["session_id"]
+    assert current != previous
+    snapshot = phone.get("/api/snapshot")
+    assert snapshot.status_code == 200 and snapshot.json()["session_id"] == current
+    assert snapshot.json()["turns"] == []
+    assert phone.cookies.get(COOKIE) == token
+    assert desktop.get("/api/mobile").json()["devices"] == 1
     assert phone.post("/api/pair", json={"code": old_code}).status_code == 401
 
 
@@ -143,8 +150,7 @@ def event_data(value):
     return json.loads(next(line[6:] for line in value.splitlines() if line.startswith("data: ")))
 
 
-@pytest.mark.parametrize("reset", [False, True])
-def test_open_stream_filters_context_and_closes_after_revocation(legacy_server, reset):
+def test_open_stream_filters_context_and_closes_after_revocation(legacy_server):
     desktop, phone = clients(legacy_server)
     legacy_server.broadcast = legacy_server.real_broadcast
     pair(desktop, phone)
@@ -159,16 +165,44 @@ def test_open_stream_filters_context_and_closes_after_revocation(legacy_server, 
         filtered = await anext(iterator)
         assert "secret-context" not in filtered
         assert event_data(filtered)["type"] == "cursor"
-        if reset:
-            await legacy_server.clear()
-        else:
-            legacy_server.MOBILE_ACCESS.revoke_all()
+        legacy_server.MOBILE_ACCESS.revoke_all()
         legacy_server.broadcast({"type": "answer_delta", "delta": "AFTER-REVOKE-SECRET"})
         frame = await anext(iterator)
         assert "AFTER-REVOKE-SECRET" not in frame
         assert event_data(frame)["type"] == "access_revoked"
         with pytest.raises(StopAsyncIteration):
             await anext(iterator)
+        assert legacy_server.EVENTS.stats()["subscribers"] == 0
+
+    asyncio.run(exercise())
+
+
+def test_open_stream_follows_new_session_and_replays_reset_after_reconnect(legacy_server):
+    desktop, phone = clients(legacy_server)
+    legacy_server.broadcast = legacy_server.real_broadcast
+    pair(desktop, phone)
+    token, cursor = phone.cookies.get(COOKIE), legacy_server.EVENTS.cursor
+
+    async def exercise():
+        response = await stream_response(legacy_server, token)
+        iterator = response.body_iterator
+        await anext(iterator)
+        await anext(iterator)
+        current = (await legacy_server.clear())["session_id"]
+        reset = event_data(await anext(iterator))
+        assert reset["type"] == "session_reset" and reset["session_id"] == current
+        context = legacy_server.spawn_answer("New session question")
+        question_cursor = event_data(await anext(iterator))
+        assert question_cursor["type"] == "cursor"
+        answer = event_data(await anext(iterator))
+        assert answer["type"] == "answer_start"
+        assert answer["session_id"] == current and answer["turn_id"] == context.turn_id.value
+        await iterator.aclose()
+        replay = (await stream_response(legacy_server, token, cursor)).body_iterator
+        assert event_data(await anext(replay)) == reset
+        assert event_data(await anext(replay)) == question_cursor
+        assert event_data(await anext(replay)) == answer
+        await replay.aclose()
         assert legacy_server.EVENTS.stats()["subscribers"] == 0
 
     asyncio.run(exercise())

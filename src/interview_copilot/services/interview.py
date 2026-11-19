@@ -12,6 +12,7 @@ from interview_copilot.domain.models import Question, SessionId, TurnId
 from interview_copilot.domain.session import SessionState
 from interview_copilot.services.cancellation import CancellationToken
 from interview_copilot.services.answer_content import parse_answer
+from interview_copilot.services.dialogue import question_context
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +49,7 @@ class TurnSnapshot:
     status: str
     at: str
     answers: tuple[AnswerSnapshot, ...]
+    dialogue: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -77,6 +79,8 @@ class _Turn:
     status: str = "pending"
     at: str = field(default_factory=lambda: time.strftime("%H:%M:%S"))
     answers: dict[tuple[str, str], _Answer] = field(default_factory=dict)
+    dialogue: dict = field(default_factory=dict)
+    candidate_speech: str = ""
 
 
 @dataclass
@@ -92,6 +96,7 @@ class _Task:
 class _Session:
     state: SessionState
     turns: dict[TurnId, _Turn] = field(default_factory=dict)
+    background: list[str] = field(default_factory=list)
 
 
 class SessionManager:
@@ -119,7 +124,10 @@ class SessionManager:
                 if task.context.kind in {"quick", "enrichment"}:
                     self._cancel_task(session, task)
             generation = session.state.start_turn(turn_id)
-            session.turns[turn_id] = _Turn(question.strip(), generation)
+            previous = next(reversed(session.turns.values()), None) if session.turns else None
+            dialogue = question_context(question.strip(), previous.dialogue if previous else None)
+            dialogue["interviewer_background"] = list(session.background)
+            session.turns[turn_id] = _Turn(question.strip(), generation, dialogue=dialogue)
             session.state.append_history(Question(session_id, turn_id, question.strip(), ()))
             session.state.set_current_answer(None)
             return self.start_task(session_id, turn_id, "quick")
@@ -158,8 +166,46 @@ class SessionManager:
                     self._cancel_task(session,task)
             generation = session.state.revise_active_turn(turn_id,question.strip())
             previous = session.turns[turn_id]
-            session.turns[turn_id] = _Turn(question.strip(),generation,at=previous.at)
+            earlier = [turn for key, turn in session.turns.items() if key != turn_id]
+            dialogue = question_context(question.strip(), earlier[-1].dialogue if earlier else None)
+            dialogue["interviewer_background"] = list(previous.dialogue.get("interviewer_background", []))
+            session.turns[turn_id] = _Turn(question.strip(),generation,at=previous.at,
+                                         dialogue=dialogue,candidate_speech=previous.candidate_speech)
             return self.start_task(session_id,turn_id,"quick")
+
+    def note_background(self, session_id: SessionId, text: str) -> None:
+        with self._lock:
+            session = self._sessions[session_id]
+            excerpt = text[:400] + (" [节选]" if len(text) > 400 else "")
+            session.background = (session.background + [excerpt])[-2:]
+
+    def note_candidate_speech(self, session_id: SessionId, text: str) -> None:
+        with self._lock:
+            session = self._sessions[session_id]
+            turn = session.turns.get(session.state.active_turn_id)
+            if turn:
+                turn.candidate_speech = (turn.candidate_speech + " " + text).strip()[-4000:]
+
+    def dialogue(self, context: TaskContext) -> dict:
+        with self._lock:
+            session = self._sessions.get(context.session_id)
+            if session is None or context.turn_id not in session.turns:
+                return {}
+            turn = session.turns[context.turn_id]
+            if turn.generation != context.generation:
+                return {}
+            result, speech = deepcopy(turn.dialogue), []
+            for turn_id, previous in session.turns.items():
+                if turn_id == context.turn_id and context.kind == "quick":
+                    break
+                if previous.candidate_speech:
+                    speech.append({"turn_id": turn_id.value, "kind": "candidate_self_report",
+                                   "text": previous.candidate_speech[-600:],
+                                   "partial": len(previous.candidate_speech) > 600})
+                if turn_id == context.turn_id:
+                    break
+            result["candidate_turns"] = speech[-2:]
+            return result
 
     def _active_task(self, context: TaskContext) -> _Task | None:
         session = self._sessions.get(context.session_id)
@@ -288,6 +334,7 @@ class SessionManager:
                 task.cancel()
             session.state.clear()
             session.turns.clear()
+            session.background.clear()
 
     def end_session(self, session_id: SessionId) -> None:
         with self._lock:
@@ -302,7 +349,8 @@ class SessionManager:
                 return None
             return TurnSnapshot(turn_id, turn.generation, turn.question, turn.quick,
                                 tuple(turn.details.items()), turn.enrichment, turn.status,
-                                turn.at, tuple(answer.snapshot() for answer in turn.answers.values()))
+                                turn.at, tuple(answer.snapshot() for answer in turn.answers.values()),
+                                deepcopy(turn.dialogue))
 
     def active_turn(self, session_id: SessionId) -> TurnSnapshot | None:
         with self._lock:

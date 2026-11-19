@@ -187,6 +187,33 @@ def test_legacy_consumer_without_attempt_callback_never_receives_mixed_output():
     assert not result and len(errors) == 1
 
 
+@pytest.mark.parametrize("disable_thinking",[True,False])
+def test_glm_fallback_uses_its_own_options_and_credentials(disable_thinking):
+    seen,answers,errors = [],[],[]
+    async def handler(request):
+        seen.append(request)
+        if request.url.host == "primary.invalid":
+            return httpx.Response(503)
+        return httpx.Response(200,stream=Frames([frame("GLM backup answer"),frame(reason="stop")]))
+    config = {"base_url":"https://primary.invalid/v1","quick_model":"quick","detail_model":"detail",
+              "fallback_enabled":True,"fallback_base_url":"https://open.bigmodel.cn/api/paas/v4",
+              "fallback_model":"glm-test","disable_thinking":disable_thinking,
+              "provider_options":{"reasoning_effort":"low"}}
+    client = LLMClient(config,transport=httpx.MockTransport(handler))
+    client.set_credentials({"primary":"synthetic-primary","fallback":"synthetic-backup"})
+    try:
+        client.stream_quick([{"role":"user","content":"Explain HTTP caching."}],"",lambda text:None,
+                            answers.append,errors.append,on_attempt=lambda *args:None)
+    finally:
+        client.close()
+    assert answers == ["GLM backup answer"] and not errors
+    assert len(seen) == 2
+    backup = json.loads(seen[1].content)
+    assert backup["model"] == "glm-test" and "reasoning_effort" not in backup
+    assert backup.get("thinking") == ({"type":"disabled"} if disable_thinking else None)
+    assert seen[1].headers["authorization"] == "Bearer synthetic-backup"
+
+
 @pytest.mark.parametrize("error", [RuntimeError("callback failed"), httpx.ReadTimeout("callback failed")])
 def test_callback_failure_does_not_trigger_another_provider(error):
     calls = []

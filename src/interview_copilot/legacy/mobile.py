@@ -18,7 +18,7 @@ _EVENT_FIELDS = {
     "answer_start": ("question", "at"), "detail_start": ("direction", "at"),
     "answer_attempt": ("attempt", "model"), "answer_delta": ("attempt", "delta"),
     "answer_done": ("attempt", "full", "document"), "answer_error": ("attempt",),
-    "answer_cancelled": (), "capture_state": ("capture",),
+    "answer_cancelled": (), "capture_state": ("capture",), "session_reset": (),
 }
 _IDENTITY = ("session_id", "turn_id", "generation", "task_id", "level")
 

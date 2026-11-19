@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <title>模型设置 · 面试辅助</title>
+  <title>工作笔记</title>
   <link rel="stylesheet" href="/static/settings.css">
   <link rel="stylesheet" href="/static/app-shell.css">
   <script src="/static/vendor/lucide.js" defer></script>
@@ -19,8 +19,9 @@
       <a href="/settings" aria-current="page"><i data-lucide="settings-2"></i>模型设置</a>
     </nav>
   </header>
-  <div class="page-toolbar"><div class="page-title"><h1>模型设置</h1><span id="mode" hidden>离线演示 · 临时配置 · 模拟连接</span></div><button id="reload" class="command subtle" title="重新加载配置" aria-label="重新加载配置"><i data-lucide="refresh-cw"></i>重新加载</button></div>
+  <div class="page-toolbar"><div class="page-title"><h1>模型设置</h1><span id="providerCount" role="status" aria-live="polite">正在读取 Provider…</span><span id="mode" hidden>离线演示 · 临时配置 · 模拟连接</span></div><button id="reload" class="command subtle" title="重新加载配置" aria-label="重新加载配置"><i data-lucide="refresh-cw"></i>重新加载</button></div>
   <main>
+    <ul id="providerInventory" class="provider-inventory" aria-label="已保存的 Provider" hidden></ul>
     <div id="notice" role="status" aria-live="polite">正在加载配置…</div>
     <form id="providerForm" autocomplete="off">
       <fieldset id="fields" disabled>
@@ -29,7 +30,7 @@
           <div class="section-heading"><h2>主服务</h2><span id="primaryStatus" class="key-state"></span></div>
           <div class="fields">
             <label>Provider<select id="preset"><option value="custom">自定义 / OpenAI 兼容</option>
-              <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="zhipu">智谱</option></select></label>
+              <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="zhipu">智谱 GLM</option></select></label>
             <label class="wide">API 地址<input id="base_url" type="url" required spellcheck="false" maxlength="2048" placeholder="https://api.example.com/v1"></label>
             <label class="wide">API Key<div class="key-input"><input id="api_key" type="password" autocomplete="new-password" maxlength="8192" placeholder="未配置" spellcheck="false">
               <button type="button" id="clear_api_key" class="command key-clear" title="清除主服务密钥" aria-label="清除主服务密钥" aria-pressed="false"><i data-lucide="trash-2"></i>清除</button></div></label>
@@ -47,6 +48,8 @@
           <div class="section-heading"><h2>备用服务</h2><label class="check"><input id="fallback_enabled" type="checkbox">启用</label><span id="fallbackStatus" class="key-state"></span></div>
           <div id="fallbackFields" hidden>
             <div class="fields">
+              <label>Provider<select id="fallbackPreset"><option value="custom">自定义 / OpenAI 兼容</option>
+                <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="zhipu">智谱 GLM</option></select></label>
               <label class="wide">API 地址<input id="fallback_base_url" type="url" spellcheck="false" maxlength="2048" placeholder="https://api.example.com/v1"></label>
               <label class="wide">API Key<div class="key-input"><input id="fallback_api_key" type="password" autocomplete="new-password" maxlength="8192" placeholder="未配置" spellcheck="false">
                 <button type="button" id="clear_fallback_api_key" class="command key-clear" title="清除备用密钥" aria-label="清除备用密钥" aria-pressed="false"><i data-lucide="trash-2"></i>清除</button></div></label>

@@ -26,6 +26,7 @@ async function fixture(t, {desktop = false} = {}) {
     }
   });
   const request = context.request;
+  await request.post(desktopUrl + '/api/mobile/revoke');
   await request.post(desktopUrl + '/api/clear');
   await request.post(desktopUrl + '/__regression__/next-pairing-window');
   let computer;
@@ -111,18 +112,47 @@ test('phone keeps old selection across new questions, reconnect, reload and desk
   assert.deepEqual(errors, []);
 });
 
-test('revocation and session reset clear the visible answer and reject the old cookie', {skip}, async t => {
+test('revocation clears the visible answer and rejects the old cookie', {skip}, async t => {
   const {phone, request, errors, pair, ask, complete} = await fixture(t);
-  for (const route of ['/api/mobile/revoke', '/api/clear']) {
-    await pair(); await ask('撤销前的问题'); await complete(1);
-    await request.post(desktopUrl + route);
-    await phone.locator('#pairing:not([hidden])').waitFor();
-    assert.equal(await phone.locator('#question').textContent(), '');
-    assert.equal(await phone.locator('#answers').textContent(), '');
-    assert.equal((await request.get(phoneUrl + '/api/snapshot')).status(), 401);
-    await request.post(desktopUrl + '/api/clear');
-  }
+  await pair(); await ask('撤销前的问题'); await complete(1);
+  await request.post(desktopUrl + '/api/mobile/revoke');
+  await phone.locator('#pairing:not([hidden])').waitFor();
+  assert.equal(await phone.locator('#question').textContent(), '');
+  assert.equal(await phone.locator('#answers').textContent(), '');
+  assert.equal((await request.get(phoneUrl + '/api/snapshot')).status(), 401);
   assert.deepEqual(errors, []);
+});
+
+test('new sessions keep the same paired phone and follow new questions across reconnects', {skip}, async t => {
+  const {context, phone, computer, request, errors, pair, ask, complete} = await fixture(t, {desktop:true});
+  await pair(); await ask('旧会话的问题'); await complete(1);
+  await phone.locator('#turns').selectOption(await phone.locator('#turns option').first().getAttribute('value'));
+  const cookie = (await context.cookies(phoneUrl)).find(item => item.name === 'copilot_viewer').value;
+  await computer.reload();
+  await request.post(desktopUrl + '/api/mobile/pairing');
+  assert.equal((await request.get(phoneUrl + '/api/snapshot')).status(),200);
+  for (let index = 1; index <= 3; index++) {
+    await request.post(desktopUrl + '/api/clear');
+    await phone.waitForFunction(() => document.querySelector('#turns').options.length === 0);
+    assert.equal(await phone.locator('#viewer').isVisible(),true);
+    assert.equal(await phone.locator('#question').textContent(),'');
+    assert.equal(await phone.locator('#answers').textContent(),'');
+    assert.equal(await phone.locator('#latest').getAttribute('aria-pressed'),'true');
+    assert.equal((await request.get(desktopUrl + '/api/mobile')).status(),200);
+    const snapshot = await (await request.get(phoneUrl + '/api/snapshot')).json();
+    assert.deepEqual(snapshot.turns,[]);
+    if (index === 2) {
+      await request.post(desktopUrl + '/__regression__/disconnect');
+      await phone.reload();
+      await phone.locator('#connection').filter({hasText:'已连接'}).waitFor();
+    }
+    await ask('新会话的问题 ' + index); await complete(1);
+    assert.equal(await phone.locator('#question').textContent(),'新会话的问题 ' + index);
+    assert.equal((await context.cookies(phoneUrl)).find(item => item.name === 'copilot_viewer').value,cookie);
+  }
+  assert.equal((await (await request.get(desktopUrl + '/api/mobile')).json()).devices,1);
+  await screenshot(phone,'phone-pairing-after-new-session');
+  assert.deepEqual(errors,[]);
 });
 
 test('QR fragment is removed immediately and exchanged without leaking a token in the URL', {skip}, async t => {
@@ -198,4 +228,28 @@ test('phone narrow screens, large type, theme and focus stay within the viewport
   assert.equal(await phone.locator('html').getAttribute('data-theme'), 'light');
   assert.equal(await phone.locator('#fontSize').inputValue(), '26');
   assert.deepEqual(errors, []);
+});
+
+test('background is silent and a corrected RAG scenario remains one turn on both displays', {skip}, async t => {
+  const {phone,computer,request,errors,pair,complete} = await fixture(t,{desktop:true});
+  await pair();
+  const voice = text => request.post(desktopUrl + '/__regression__/voice',{data:{text}});
+  await voice('我们后续有一次终面，然后两周线下培训。');
+  const initial = await (await request.get(desktopUrl + '/api/session/snapshot')).json();
+  assert.equal(initial.turns.length,0);
+  const first = '假设财报切片都已入库，不知道你对这个IG了不了解';
+  await voice(first); await complete(1);
+  await voice('RAG');
+  await voice('比如用户问三年利润率为什么下降，怎么找数据和计算？');
+  await phone.locator('#question').filter({hasText:'怎么找数据和计算'}).waitFor();
+  await complete(1);
+  assert.equal(await computer.locator('.qa').count(),1);
+  assert.match(await computer.locator('.qbox').textContent(),/IG.*RAG.*三年利润率/);
+  const state = await (await request.get(desktopUrl + '/api/session/snapshot')).json();
+  const history = await (await request.get(desktopUrl + '/api/history/session/' + state.session_id)).json();
+  assert.equal(history.session.turns.length,1);
+  assert.match(history.session.turns[0].question,/IG.*RAG.*怎么找数据和计算/);
+  const projection = await (await request.get(phoneUrl + '/api/snapshot')).json();
+  assert.equal(JSON.stringify(projection).includes('interviewer_background'),false);
+  assert.deepEqual(errors,[]);
 });
