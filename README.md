@@ -56,6 +56,10 @@ The existing implementation remains in `server.py`, `copilot/`, and `static/`. A
 
 - [v2 architecture design](docs/superpowers/specs/2026-09-23-v2-incremental-architecture-design.md)
 - [v2 implementation plan](.hermes/plans/2026-09-23_120000-v2-incremental-restructure.md)
+- [Continuous speech architecture design](docs/2026-11-19-speech-architecture-design.md)
+- [Speech implementation plan and acceptance gates](docs/2026-11-19-speech-implementation-plan.md)
+
+The speech design separates bounded ASR processing windows from complete questions. It is a proposed migration, not the currently active input pipeline.
 
 ## Platform scope
 
