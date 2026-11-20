@@ -52,7 +52,7 @@ def build_hotwords(resume_text: str = "", jd_text: str = "",
                 add_word(tok)
     # 中文高频技术词
     zh_words = ("多模态 关系抽取 知识图谱 检索增强 少样本 索引 事务 高并发 分布式 "
-                "微服务 缓存 消息队列 大模型 智能体 语义对齐 时序图谱 GraphRAG RAG "
+                "微服务 缓存 消息队列 幂等 幂等键 重试 库存扣减 虚拟内存 页面置换 大模型 智能体 语义对齐 时序图谱 GraphRAG RAG "
                 "Prompt工程 模型微调")
     for w in zh_words.split():
         add_word(w)

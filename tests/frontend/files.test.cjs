@@ -19,6 +19,11 @@ async function screenshot(page,name) {
   await page.screenshot({path:path.join(process.env.INTERVIEW_SCREENSHOT_DIR,name + '.png'),fullPage:true});
 }
 const file = (name,text) => ({name,mimeType:'text/plain',buffer:Buffer.from(text)});
+async function uploadFiles(page, files) {
+  await page.locator('#fileInput').setInputFiles(files);
+  await page.locator('#batchSubmit').click();
+  await page.locator('#batchClose').click();
+}
 const identity = 'a'.repeat(32);
 function record(overrides = {}) {
   return {id:identity,name:'架构设计参考.md',title:'架构设计参考',kind:'reference',extension:'.md',enabled:true,archived:false,
@@ -64,7 +69,7 @@ test('files batch upload initializes reference documents, previews, renames, swi
   await page.goto(base + '/files');
   const name = 'browser-reference-' + Date.now() + '.md';
   const text = '# PostgreSQL\nEXPLAIN ANALYZE executes queries and returns actual plan statistics.\n' + name;
-  await page.locator('#fileInput').setInputFiles([
+  await uploadFiles(page,[
     file(name,text),
     file('browser-reference-redis.txt','Redis documentation about expiry and cache consistency, used as reference.'),
     file('unsupported.exe','invalid format')]);
@@ -89,7 +94,7 @@ test('files batch upload initializes reference documents, previews, renames, swi
   await page.getByRole('button',{name:'全部',exact:true}).click();
   await page.locator(`[data-file-id="${id}"]`).waitFor();
   assert.equal(await checkbox.isChecked(),false);
-  await page.locator('#fileInput').setInputFiles(file(name,text));
+  await uploadFiles(page,file(name,text));
   await page.locator('#notice').filter({hasText:'1 份已存在'}).waitFor();
   await page.reload();
   await page.locator('#detailName').filter({hasText:name}).waitFor();
@@ -139,7 +144,7 @@ test('files wait for a pending save before archiving and recover controls after 
 test('files parse failure stays visible and can be retried', {skip}, async t => {
   const {page,errors} = await fixture(t);
   await page.goto(base + '/files');
-  await page.locator('#fileInput').setInputFiles(file('empty-reference.txt',' '));
+  await uploadFiles(page,file('empty-reference.txt',' '));
   await page.locator('#retry:not([hidden])').waitFor();
   assert.match(await page.locator('#fileError').textContent(),/OCR/);
   const pending = page.waitForResponse(response => response.url().endsWith('/retry') && response.request().method() === 'POST');
@@ -149,6 +154,137 @@ test('files parse failure stays visible and can be retried', {skip}, async t => 
   const id = new URL(page.url()).searchParams.get('file');
   await page.locator(`[data-file-id="${id}"] .status-error`).waitFor();
   await screenshot(page,'files-parse-error');
+  assert.deepEqual(errors,[]);
+});
+
+test('failed files expose retry and delete directly in the narrow list', {skip}, async t => {
+  const {page,errors} = await fixture(t, {width:390,height:844});
+  await page.goto(base + '/files');
+  await uploadFiles(page,file('failed-actions.txt','   \n '));
+  await page.locator('#retry:not([hidden])').waitFor();
+  const id = new URL(page.url()).searchParams.get('file');
+  await page.locator('#backToFiles').click();
+  const row = page.locator(`[data-file-id="${id}"]`);
+  const retry = row.getByRole('button',{name:'重新解析'});
+  await retry.click();
+  await row.locator('.status-error').waitFor();
+  await retry.waitFor({state:'visible'});
+  page.once('dialog', dialog => dialog.dismiss());
+  await row.getByRole('button',{name:'删除文件 failed-actions.txt',exact:true}).click();
+  assert.equal(await row.count(),1);
+  await screenshot(page,'files-failed-actions-mobile');
+  page.once('dialog', dialog => dialog.accept());
+  await row.getByRole('button',{name:'删除文件 failed-actions.txt',exact:true}).click();
+  await row.waitFor({state:'detached'});
+  assert.match(await page.locator('#notice').textContent(),/已永久删除/);
+  assert.deepEqual(errors,[]);
+});
+
+for (const width of [1365,390]) test(`ready and archived files can be permanently deleted at ${width}px`, {skip}, async t => {
+  const {page,request,errors} = await fixture(t,{width,height:900});
+  const name = `delete-ready-${width}.md`;
+  await page.goto(base + '/files');
+  await uploadFiles(page,file(name,`PostgreSQL deletion test at ${width}px with unique reference data.`));
+  const detailDelete = page.getByRole('button',{name:'删除文件',exact:true});
+  await detailDelete.waitFor({state:'visible'});
+  const id = new URL(page.url()).searchParams.get('file');
+  await page.waitForFunction(async id => (await (await fetch('/api/files/'+id)).json()).file.status === 'ready',id);
+  page.once('dialog',dialog => dialog.dismiss());
+  await detailDelete.click();
+  assert.equal((await request.get(`${base}/api/files/${id}`)).status(),200);
+  await page.goto(base + '/files');
+  const row = page.locator(`[data-file-id="${id}"]`);
+  await row.waitFor({state:'visible'});
+  assert.equal(await row.getByRole('button',{name:`删除文件 ${name}`,exact:true}).isVisible(),true);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),true);
+  await screenshot(page,`files-delete-ready-${width}`);
+  page.once('dialog',dialog => dialog.accept());
+  await row.getByRole('button',{name:`删除文件 ${name}`,exact:true}).click();
+  await row.waitFor({state:'detached'});
+  assert.equal((await request.get(`${base}/api/files/${id}`)).status(),404);
+  assert.equal((await request.get(`${base}/api/files/${id}/download`)).status(),404);
+  await uploadFiles(page,file(name,`Archived reference deletion at ${width}px with different content.`));
+  await detailDelete.waitFor({state:'visible'});
+  const archivedId = new URL(page.url()).searchParams.get('file');
+  await page.getByRole('button',{name:'归档文件',exact:true}).click();
+  await page.getByRole('button',{name:'恢复文件',exact:true}).waitFor({state:'visible'});
+  assert.equal(await detailDelete.isVisible(),true);
+  await screenshot(page,`files-delete-archived-${width}`);
+  page.once('dialog',dialog => dialog.accept());
+  await detailDelete.click();
+  await page.locator('#notice').filter({hasText:'已永久删除'}).waitFor();
+  assert.equal(new URL(page.url()).searchParams.has('file'),false);
+  assert.equal((await request.get(`${base}/api/files/${archivedId}`)).status(),404);
+  assert.deepEqual(errors,[]);
+});
+
+test('batch upload stages, adds and removes files, and retries only failed entries', {skip}, async t => {
+  const {page,errors} = await fixture(t);
+  const one = record({id:'c'.repeat(32),name:'stage-one.md'}), two = record({id:'d'.repeat(32),name:'stage-two.md'});
+  const bodies = []; let stored = [];
+  await page.route('**/api/files',route => route.fulfill({json:{files:stored,legacy:[],resume_mode:'legacy'}}));
+  for (const value of [one,two]) await page.route('**/api/files/'+value.id,route => route.fulfill({json:{file:value}}));
+  await page.route('**/api/files/upload',route => {
+    bodies.push(route.request().postDataBuffer().toString('utf8'));
+    stored = bodies.length === 1 ? [one] : [one,two];
+    return route.fulfill({status:202,json:{results:bodies.length === 1 ? [
+      {ok:true,name:one.name,file:one},{ok:false,name:two.name,error:'合成暂时失败'}] : [{ok:true,name:two.name,file:two}]}});
+  });
+  await page.goto(base+'/files');
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByRole('button',{name:'批量上传',exact:true}).click();
+  const picked = await chooser; assert.equal(picked.isMultiple(),true);
+  await picked.setFiles([file(one.name,'First batch reference.'),file('remove.md','Removed before upload.')]);
+  await page.getByRole('button',{name:'移出上传清单 remove.md',exact:true}).click();
+  const more = page.waitForEvent('filechooser');
+  await page.getByRole('button',{name:'添加文件',exact:true}).click();
+  await (await more).setFiles(file(two.name,'Second batch reference.'));
+  assert.equal(await page.locator('#batchFiles li').count(),2);
+  assert.equal(bodies.length,0);
+  for (const width of [1365,390,320]) {
+    await page.setViewportSize({width,height:844});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+    assert.equal(await page.locator('#batchDialog').evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
+    await screenshot(page,`files-batch-preview-${width}`);
+  }
+  await page.locator('#batchSubmit').click();
+  await page.locator('#batchSubmitLabel').filter({hasText:'重试失败文件'}).waitFor();
+  assert.match(await page.locator('#batchFiles').textContent(),/已接收.*合成暂时失败/s);
+  assert.equal(bodies.length,1);
+  assert.equal(bodies[0].includes('remove.md'),false);
+  await page.locator('#batchSubmit').click();
+  await page.locator('#batchStatus').filter({hasText:'2 份已接收'}).waitFor();
+  assert.equal(bodies.length,2);
+  assert.equal(bodies[1].includes('filename="stage-one.md"'),false);
+  assert.equal(bodies[1].includes('filename="stage-two.md"'),true);
+  assert.equal(await page.locator('#batchSubmit').isDisabled(),true);
+  await screenshot(page,'files-batch-results-320');
+  await page.locator('#batchClose').click();
+  assert.deepEqual(errors,[]);
+});
+
+test('batch upload enforces file count before sending and preserves single resume selection', {skip}, async t => {
+  const {page,errors} = await fixture(t,{width:390,height:844});
+  let requests = 0;
+  await page.route('**/api/files/upload',route => { requests++; return route.abort(); });
+  await page.goto(base+'/files');
+  await page.locator('#fileInput').setInputFiles(Array.from({length:21},(_,i)=>file(`limit-${i}.txt`,'Reference data.')));
+  await page.locator('#batchError').filter({hasText:'20 份'}).waitFor();
+  assert.equal(await page.locator('#batchSubmit').isDisabled(),true);
+  await page.getByRole('button',{name:'移出上传清单 limit-20.txt',exact:true}).click();
+  assert.equal(await page.locator('#batchSubmit').isDisabled(),false);
+  await page.locator('#batchKind').selectOption('resume');
+  assert.equal(await page.locator('#batchSubmit').isDisabled(),true);
+  assert.match(await page.locator('#batchError').textContent(),/1 份/);
+  await page.locator('#batchClose').click();
+  assert.equal(requests,0);
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByRole('button',{name:'上传简历',exact:true}).click();
+  const picked = await chooser; assert.equal(picked.isMultiple(),false);
+  await picked.setFiles(file('resume.md','Candidate resume with a single current version.'));
+  assert.equal(await page.locator('#batchFiles li').count(),1);
+  assert.equal(await page.locator('#batchSubmit').isDisabled(),false);
+  await page.locator('#batchClose').click();
   assert.deepEqual(errors,[]);
 });
 

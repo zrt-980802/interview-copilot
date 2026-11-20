@@ -136,6 +136,7 @@ class KnowledgeStore:
         self._lock = threading.RLock()
         self._running = self._semantic_running = False
         self._semantic_revision = None
+        self._deleted = set()
         with closing(self._conn()) as conn, conn:
             conn.executescript("""CREATE TABLE IF NOT EXISTS analyses(
                 doc_id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,status TEXT NOT NULL,
@@ -167,6 +168,8 @@ class KnowledgeStore:
         self.sync_fact_index()
         with self._lock, closing(self._conn()) as conn, conn:
             for document in documents:
+                if document['id'] in self._deleted:
+                    continue
                 fingerprint = self._fingerprint(document)
                 row = conn.execute("SELECT * FROM analyses WHERE doc_id=?",(document["id"],)).fetchone()
                 if not row or row["fingerprint"] != fingerprint:
@@ -278,11 +281,25 @@ class KnowledgeStore:
                     for fact in facts if fact["document_id"] == doc["id"] and fact["state"] != "excluded"]} for doc in documents]
 
     def sync_fact_index(self):
-        self.library.index.update_documents("facts",[
-            {"id":fact["id"],"source":fact["source"],"title":fact["subject"],"heading":fact["subject"],
-             "kind":"candidate_material" if fact["state"] in {"confirmed","source_supported"} else "reference",
-             "text":fact["quote"],"lines":fact["lines"],"search_text":fact["value"] + "\n" + fact["quote"]}
-            for fact in self._facts() if fact["state"] != "excluded"])
+        with self._lock:
+            self.library.index.update_documents("facts",[
+                {"id":fact["id"],"source":fact["source"],"title":fact["subject"],"heading":fact["subject"],
+                 "kind":"candidate_material" if fact["state"] in {"confirmed","source_supported"} else "reference",
+                 "text":fact["quote"],"lines":fact["lines"],"search_text":fact["value"] + "\n" + fact["quote"]}
+                for fact in self._facts() if fact["state"] != "excluded"])
+
+    def forget(self, identity):
+        with self._lock, closing(self._conn()) as conn, conn:
+            self._deleted.add(identity)
+            row = conn.execute('SELECT payload FROM analyses WHERE doc_id=?', (identity,)).fetchone()
+            if row:
+                facts = json.loads(row['payload']).get('facts', [])
+                conn.executemany('DELETE FROM reviews WHERE fact_id=?', [(fact['id'],) for fact in facts])
+            conn.execute('DELETE FROM analyses WHERE doc_id=?', (identity,))
+            conn.commit()
+            if self.semantic:
+                self.semantic.forget('uploads:' + identity)
+            self.sync_fact_index()
 
     def _facts(self, *, include_inactive=False):
         active = {doc["id"] for doc in self._documents()}
@@ -361,7 +378,9 @@ class KnowledgeStore:
         facts = self.detail(identity)["facts"]
         if not any(fact["id"] == fact_id for fact in facts):
             raise KeyError(fact_id)
-        with closing(self._conn()) as conn, conn:
+        with self._lock, closing(self._conn()) as conn, conn:
+            if identity in self._deleted:
+                raise KeyError(identity)
             conn.execute("INSERT OR REPLACE INTO reviews(fact_id,decision) VALUES(?,?)",(fact_id,decision))
         self.schedule()
 

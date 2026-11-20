@@ -124,7 +124,7 @@ python server.py
 ## 当前兼容性注意事项
 
 - 当前 `server.py` 在 lifespan 启动时读取配置并装配资源，导入模块不启动采集或打开数据库。缺失必需配置仍会使启动失败。
-- `启动面试辅助.bat` 和 `后台手机模式.bat` 使用 `scripts/launch.ps1`，读取配置端口并检查主服务身份和就绪状态。STT URL 为本机时，无论主服务是否已运行，都会检查 STT `/models`；不可用时按环境变量 `INTERVIEW_COPILOT_STT_DIR` 或 `stt.server_dir` 启动已有服务并等待 API 就绪。目录未配置时需自行启动 STT；STT 未就绪时电脑模式提示仍可手动提问，手机模式会拒绝自动采集。
+- `start-desktop.bat` 和 `start-phone.bat` 使用 `scripts/launch.ps1`，读取配置端口并检查主服务身份和就绪状态。STT URL 为本机时，无论主服务是否已运行，都会检查 STT `/models`；不可用时按环境变量 `INTERVIEW_COPILOT_STT_DIR` 或 `stt.server_dir` 启动已有服务并等待 API 就绪。目录未配置时需自行启动 STT；STT 未就绪时电脑模式提示仍可手动提问，手机模式会拒绝自动采集。
 - STT 的 `localhost`、`127.0.0.0/8` 和 `::1` 请求绕过环境与 Windows 系统代理，防止本机服务被代理成 502；远端 STT 继续保留原代理策略。启动器管理本机服务的 HTTP 请求也直接访问回环。`/models` 可用只证明 API 已启动，不代表模型已完成加载或真实转写验收。
 - `stt.url` 是应用配置键，而 `STTClient` 构造参数内部叫 `base_url`。这是现有适配关系，不是两个都要配置。
 

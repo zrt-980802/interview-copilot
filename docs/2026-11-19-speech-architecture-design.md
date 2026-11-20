@@ -208,25 +208,28 @@ Smart Turn 使用最近最多 8 秒音频判断停顿性质；完整问题上下
 
 ## 11. 配置与渐进切换
 
-以下为建议配置结构，尚未进入当前 loader；数值是待校准的起点：
+当前试用实现采用以下扁平配置，`config.example.json`为可直接使用的入口；数值仍需真人样本校准。最初设计的嵌套配置未作为另一套兼容格式实现：
 
 ```json
 {
   "speech": {
     "mode": "legacy",
-    "backend": "whisper_batch",
-    "vad": {"provider": "silero", "pre_roll_ms": 300},
-    "window": {"target_ms": 6000, "max_ms": 12000, "context_ms": 400},
-    "turn": {"detector": "smart_turn", "min_quiet_ms": 500, "review_after_ms": 8000},
-    "limits": {"audio_ring_ms": 120000, "queued_audio_ms": 24000, "queue_age_ms": 10000},
-    "diagnostics": {"retain_audio": false}
+    "window_ms": 6000,
+    "max_window_ms": 12000,
+    "pre_roll_ms": 300,
+    "min_quiet_ms": 500,
+    "commit_quiet_ms": 1400,
+    "review_after_ms": 8000,
+    "audio_ring_ms": 120000,
+    "vad_threshold": 0.5,
+    "endpoint_threshold": 0.65
   }
 }
 ```
 
-`mode=legacy/shadow/active` 是唯一运行模式开关；旧 `v2_transcription_enabled` 不能构成第二个独立路由开关，迁移时有冲突必须报错并给出升级说明。shadow 共用一次采集，由有界只读 tap 接收音频；不能重新打开设备。它默认用录制回放/假 provider 比较逻辑，真实双识别开销在明确开启后限速运行，不能挤压正在使用的主链路。
+`mode`是唯一运行模式开关，当前支持`legacy/active`，未指定时默认legacy。设计中的运行时shadow仍待实现，当前明确拒绝该值，以离线回放作对照；将来shadow必须共用一次采集、使用有界只读tap，不能另开设备或挤压主链路。旧`v2_transcription_enabled`不作为当前装配入口。
 
-`window.max_ms` 只限制单次识别窗口；`review_after_ms` 只改变 UI 状态；`audio_ring_ms` 只限制内存保留。三者都不是题目结束条件。参数需验证数值、关系及后端能力；质量阈值按模型版本固定配置并记录。
+`max_window_ms`只限制单次识别窗口；`review_after_ms`只改变UI状态；`audio_ring_ms`只限制内存保留。三者都不是题目结束条件。当前共享队列限制为24秒待处理音频、12个任务、10秒队列年龄；尚未开放独立配置。参数验证数值及时间预算关系，质量阈值按模型版本记录。
 
 旧 `audio.max_segment_ms` 仅在 legacy 路径生效。active 路径不隐式继承它，更不能通过把它设成无限大来规避架构问题。切换输入模式在暂停两路采集后执行，重建输入 epoch，但不重建 SessionManager、不清历史、不撤销手机。
 

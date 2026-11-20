@@ -1,0 +1,89 @@
+diff --git a/stt_server.py b/stt_server.py
+index 6dacad7..3c4b8d0 100644
+--- a/stt_server.py
++++ b/stt_server.py
+@@ -9,6 +9,8 @@ import sys
+ import time
+ import logging
+ import threading
++import asyncio
++from uuid import uuid4
+ from pathlib import Path
+ 
+ # cuBLAS (CUDA 12) DLL 路径 — ctranslate2 GPU 需要
+@@ -37,6 +39,7 @@ ALIASES = {"medium": "medium", "large-v3-turbo": "large-v3-turbo", "turbo": "lar
+ 
+ _lock = threading.Lock()
+ _models = {}  # name -> WhisperModel 实例
++_inference_lock = threading.Lock()
+ 
+ 
+ def resolve_model_dir(model_key: str) -> Path:
+@@ -71,7 +74,7 @@ def get_model(model_key: str):
+ 
+ 
+ def transcribe(model_key: str, audio_path: str, language: str | None, prompt: str | None,
+-               beam_size: int = 5, vad: bool = True) -> tuple[str, float]:
++               beam_size: int = 5, vad: bool = True) -> dict:
+     t0 = time.time()
+     m = get_model(model_key)
+     seg_iter, info = m.transcribe(
+@@ -85,17 +88,28 @@ def transcribe(model_key: str, audio_path: str, language: str | None, prompt: st
+         no_repeat_ngram_size=4,
+     )
+     # 流式收集, 同时控制延迟: 优先拿结果
+-    parts = []
++    parts, segments = [], []
+     for s in seg_iter:
+         parts.append(s.text)
++        segments.append({"start": float(s.start), "end": float(s.end), "text": s.text,
++                         "avg_logprob": float(s.avg_logprob), "no_speech_prob": float(s.no_speech_prob),
++                         "compression_ratio": float(s.compression_ratio)})
+     text = "".join(parts).strip()
+     dt = time.time() - t0
+     log.info("转写完成 model=%s 耗时=%.2fs 字符=%d", model_key, dt, len(text))
+-    return text, dt
++    return {"text": text, "model": model_key, "processing_ms": round(dt * 1000),
++            "duration_ms": round(dt * 1000), "duration": float(info.duration),
++            "language": info.language, "segments": segments}
++
++
++def transcribe_serial(*args):
++    with _inference_lock:
++        return transcribe(*args)
+ 
+ 
+ # ---------- FastAPI ----------
+ from fastapi import FastAPI, UploadFile, File, Form, HTTPException  # noqa: E402
++from fastapi.responses import PlainTextResponse
+ 
+ app = FastAPI(title="Local Whisper STT (OpenAI compatible)")
+ 
+@@ -121,17 +135,18 @@ async def audio_transcriptions(
+         raise HTTPException(400, f"未知模型: {model} (可用: {list(MODEL_REPOS)})")
+     tmp = SCRIPT_DIR / "tmp_audio"
+     tmp.mkdir(exist_ok=True)
+-    suffix = Path(file.filename or "audio.wav").suffix or ".wav"
+-    dest = tmp / f"in_{int(time.time()*1000)}_{os.getpid()}{suffix}"
+-    with open(dest, "wb") as f:
+-        f.write(await file.read())
++    payload = await file.read(32 * 1024 * 1024 + 1)
++    if len(payload) > 32 * 1024 * 1024:
++        raise HTTPException(413, "音频文件过大")
++    dest = tmp / f"in_{uuid4().hex}.audio"
+     try:
+-        text, dt = transcribe(key, str(dest), language, prompt)
+-        if not text:
+-            text = ""  # 静音/无语音
++        await asyncio.to_thread(dest.write_bytes, payload)
++        result = await asyncio.to_thread(transcribe_serial, key, str(dest), language, prompt)
+         if response_format == "text":
+-            return text
+-        return {"text": text, "model": key, "duration_ms": int(dt * 1000), "language": language}
++            return PlainTextResponse(result["text"])
++        if response_format == "verbose_json":
++            return result
++        return {key: result[key] for key in ("text", "model", "duration_ms", "processing_ms", "duration", "language")}
+     except Exception as e:
+         log.exception("转写出错")
+         raise HTTPException(500, f"转写出错: {e}")
