@@ -88,6 +88,7 @@ class DocumentLibrary:
         self.root, self.index, self.workers = Path(root), index, workers
         self.extractor = extractor
         self.on_change = lambda: None
+        self.on_delete = lambda identity: None
         self._lock = threading.RLock()
         self._running = False
         self._closed = False
@@ -214,8 +215,8 @@ class DocumentLibrary:
                     if self.workers.cancelled.is_set():
                         return
                     with self._lock, closing(self._conn()) as conn, conn:
-                        current = self._row(conn, row["id"])
-                        if current["archived"]:
+                        current = conn.execute("SELECT * FROM documents WHERE id=?", (row["id"],)).fetchone()
+                        if current is None or current["archived"]:
                             continue
                         self._text_path(row["id"]).write_text(text, encoding="utf-8")
                         overview = "\n".join(line.strip().lstrip("# ") for line in text.splitlines() if line.strip())[:600]
@@ -295,6 +296,30 @@ class DocumentLibrary:
             conn.execute("UPDATE documents SET status='queued',error='' WHERE id=?", (identity,))
         self._schedule()
         return self.get(identity)
+
+    def delete(self, identity):
+        with self._lock, closing(self._conn()) as conn, conn:
+            self._accepting()
+            row = self._row(conn, identity)
+            moved = []
+            try:
+                for path in (self._original_path(row), self._text_path(identity)):
+                    if path.exists():
+                        destination = path.with_name(path.name + '.deleted')
+                        path.replace(destination)
+                        moved.append((path, destination))
+                conn.execute('DELETE FROM documents WHERE id=?', (identity,))
+                self._sync_index(conn)
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                for path, destination in reversed(moved):
+                    destination.replace(path)
+                raise
+            for _, destination in moved:
+                destination.unlink(missing_ok=True)
+        self.on_delete(identity)
+        self.on_change()
 
     def resume(self):
         """None preserves the legacy source; empty text explicitly disables managed resumes."""

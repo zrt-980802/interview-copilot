@@ -43,10 +43,13 @@ class SemanticIndex:
         self.model, self.threshold = model, threshold
         self._lock, self._compute = threading.RLock(), threading.Lock()
         self._active, self._cache = set(), OrderedDict()
+        self._deleted = set()
         self._state = {"status":"idle", "model":model, "chunks":0, "error":""}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._conn()) as conn, conn:
             conn.execute("CREATE TABLE IF NOT EXISTS vectors(id TEXT PRIMARY KEY,model TEXT NOT NULL,vector TEXT NOT NULL)")
+            if 'doc_id' not in {row[1] for row in conn.execute('PRAGMA table_info(vectors)')}:
+                conn.execute("ALTER TABLE vectors ADD COLUMN doc_id TEXT NOT NULL DEFAULT ''")
         self._rows = {}
 
     def _conn(self):
@@ -54,7 +57,20 @@ class SemanticIndex:
 
     def activate(self, identities):
         with self._lock:
-            self._active = set(identities)
+            self._active = set(identities) - self._deleted
+
+    def forget(self, identity):
+        with self._lock, closing(self._conn()) as conn, conn:
+            self._deleted.add(identity)
+            self._active.discard(identity)
+            keys = [key for key, row in self._rows.items() if row['doc_id'] == identity]
+            # Legacy vectors without ownership cannot be retained on deletion.
+            conn.execute("DELETE FROM vectors WHERE doc_id=? OR doc_id=''", (identity,))
+            conn.executemany('DELETE FROM vectors WHERE id=?', [(key,) for key in keys])
+            for key in keys:
+                self._rows.pop(key)
+            self._cache.clear()
+            self._state['chunks'] = len(self._rows)
 
     def sync(self, documents, *, cancelled):
         try:
@@ -72,11 +88,14 @@ class SemanticIndex:
                     key = hashlib.sha256(json.dumps([self.model,row],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
                     rows[key] = row
             pending = []
-            with closing(self._conn()) as conn:
+            with self._lock, closing(self._conn()) as conn, conn:
                 for key, row in rows.items():
+                    if row['doc_id'] in self._deleted:
+                        continue
                     saved = conn.execute("SELECT vector FROM vectors WHERE id=? AND model=?",(key,self.model)).fetchone()
                     if saved:
                         row["vector"] = _vector(json.loads(saved[0]))
+                        conn.execute('UPDATE vectors SET doc_id=? WHERE id=?', (row['doc_id'], key))
                     else:
                         pending.append((key,row))
             for offset in range(0,len(pending),4):
@@ -89,19 +108,21 @@ class SemanticIndex:
                     vectors = self.encoder([row.get("search_text") or row["title"] + "\n" + row["heading"] + "\n" + row["excerpt"] for _,row in batch])
                 if len(vectors) != len(batch):
                     raise ValueError("embedding count mismatch")
-                with closing(self._conn()) as conn, conn:
+                with self._lock, closing(self._conn()) as conn, conn:
                     for (key,row), value in zip(batch,vectors):
+                        if row['doc_id'] in self._deleted:
+                            continue
                         row["vector"] = _vector(value)
-                        conn.execute("INSERT OR REPLACE INTO vectors VALUES(?,?,?)",(key,self.model,json.dumps(row["vector"])))
-                with self._lock:
-                    self._rows.update({key:dict(row) for key,row in batch})
+                        conn.execute("INSERT OR REPLACE INTO vectors(id,model,vector,doc_id) VALUES(?,?,?,?)",
+                                     (key,self.model,json.dumps(row["vector"]),row['doc_id']))
+                    self._rows.update({key:dict(row) for key,row in batch if row['doc_id'] not in self._deleted})
                     self._state["chunks"] = len(self._rows)
             if rows and callable(getattr(self.encoder,"warmup",None)) and not cancelled.is_set():
                 with self._compute:
                     self.encoder.warmup()
             with self._lock:
-                self._rows = rows
-                self._state.update(status="ready", chunks=len(rows))
+                self._rows = {key:row for key,row in rows.items() if row['doc_id'] not in self._deleted}
+                self._state.update(status="ready", chunks=len(self._rows))
         except Exception:
             with self._lock:
                 self._state.update(status="error", error="本地语义索引不可用，请检查 semantic 依赖及本地模型缓存；关键词检索仍可用")

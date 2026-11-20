@@ -84,6 +84,20 @@ def test_raw_stream_emits_pcm_and_closes(backend):
     assert stream.stopped and stream.closed
 
 
+def test_raw_stream_reports_backend_and_queue_gaps(backend):
+    chunks = queue.Queue(maxsize=1)
+    gaps = []
+    stream, _rate, _channels = coreaudio.open_input_stream(
+        1, chunks, on_gap=lambda: gaps.append("gap")
+    )
+
+    stream.callback(b"first", 1, None, "overflow")
+    stream.callback(b"second", 1, None, None)
+
+    assert chunks.get_nowait() == b"first"
+    assert gaps == ["gap", "gap"]
+
+
 def test_source_implements_v2_lifecycle(backend):
     captured = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
     source = coreaudio.CoreAudioSource(

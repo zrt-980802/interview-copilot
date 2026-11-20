@@ -242,8 +242,25 @@ class CorpusIndex:
             if self._status["closed"]:
                 return []
             titles = self._db.execute("SELECT DISTINCT doc_id,title FROM passages").fetchall()
-            named_docs = {row["doc_id"] for row in titles if anchors.intersection(terms(row["title"]))}
-            title_anchors = set().union(*(anchors.intersection(terms(row["title"])) for row in titles))
+            anchor_docs = {
+                anchor: {row["doc_id"] for row in titles if anchor in terms(row["title"])}
+                for anchor in anchors
+            }
+            distinct_titles = {row["title"] for row in titles}
+            anchor_titles = {
+                anchor: {row["title"] for row in titles if anchor in terms(row["title"])}
+                for anchor in anchors
+            }
+            # Generic collection words such as "Agent" occur in most titles and
+            # do not identify a named source. Treating them as document names
+            # lets one exact FAQ over-filter the deeper topical passages. Count
+            # distinct titles rather than index records because one source can
+            # also have extracted fact records with the same title.
+            title_anchors = {
+                anchor for anchor, matched_titles in anchor_titles.items()
+                if matched_titles and len(matched_titles) <= max(1, len(distinct_titles) // 3)
+            }
+            named_docs = set().union(*(anchor_docs[anchor] for anchor in title_anchors)) if title_anchors else set()
             rows = self._db.execute("""SELECT *, bm25(passages, 6.0, 3.0, 1.0) AS rank
                 FROM passages WHERE passages MATCH ? ORDER BY rank, source, line_start LIMIT 40""", (query,)).fetchall()
             if anchors:
@@ -260,6 +277,14 @@ class CorpusIndex:
         focused = [row for row in unique.values()
                    if content_anchors.intersection(terms(row["excerpt"] + " " + row["heading"].rsplit(" / ", 1)[-1]))]
         candidates = focused or list(unique.values())
+        # Require independent topical support when a named-source query has
+        # strong matches. Fact search terms may be richer than the source quote.
+        topic_terms = set(query_terms) - title_anchors
+        if named_docs and topic_terms:
+            support = {id(row): len(topic_terms.intersection(row['body_terms'].split())) for row in candidates}
+            best = max(support.values(), default=0)
+            if best >= 3:
+                candidates = [row for row in candidates if support[id(row)] >= max(2, best / 2)]
         # Named technologies should outrank broad topic words in mixed-language queries.
         rows = sorted(candidates, key=lambda row: (
             -len(content_anchors.intersection(terms(row["excerpt"]))), row["rank"], row["source"], row["line_start"]))
@@ -284,8 +309,10 @@ class CorpusIndex:
                     combined[key] = row
                     scores[key] = scores.get(key,0) + weight / (60 + rank)
             rows = [combined[key] for key in sorted(scores,key=lambda key:(-scores[key],key))]
-        if named_docs:
-            rows = [row for row in rows if row["doc_id"] in named_docs]
+        # A noisy name can match an unrelated title. Never let it exclude
+        # passages that independently match the actual mechanism being asked.
+        if named_docs and not content_anchors:
+            rows.sort(key=lambda row: row["doc_id"] not in named_docs)
         results, counts = [], {}
         source_limit = limit if len({candidate["source"] for candidate in rows}) == 1 else 2
         for row in rows:

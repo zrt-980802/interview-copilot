@@ -3,11 +3,12 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <title>模型设置 · 面试辅助</title>
+  <title>工作笔记</title>
   <link rel="stylesheet" href="/static/settings.css">
   <link rel="stylesheet" href="/static/app-shell.css">
   <script src="/static/vendor/lucide.js" defer></script>
   <script src="/static/js/settings.js" type="module"></script>
+  <script src="/static/js/recording-settings.js" type="module"></script>
 </head>
 <body class="settings-page">
   <header class="app-header">
@@ -19,8 +20,9 @@
       <a href="/settings" aria-current="page"><i data-lucide="settings-2"></i>模型设置</a>
     </nav>
   </header>
-  <div class="page-toolbar"><div class="page-title"><h1>模型设置</h1><span id="mode" hidden>离线演示 · 临时配置 · 模拟连接</span></div><button id="reload" class="command subtle" title="重新加载配置" aria-label="重新加载配置"><i data-lucide="refresh-cw"></i>重新加载</button></div>
+  <div class="page-toolbar"><div class="page-title"><h1>模型设置</h1><span id="providerCount" role="status" aria-live="polite">正在读取 Provider…</span><span id="mode" hidden>离线演示 · 临时配置 · 模拟连接</span></div><button id="reload" class="command subtle" title="重新加载配置" aria-label="重新加载配置"><i data-lucide="refresh-cw"></i>重新加载</button></div>
   <main>
+    <ul id="providerInventory" class="provider-inventory" aria-label="已保存的 Provider" hidden></ul>
     <div id="notice" role="status" aria-live="polite">正在加载配置…</div>
     <form id="providerForm" autocomplete="off">
       <fieldset id="fields" disabled>
@@ -29,7 +31,7 @@
           <div class="section-heading"><h2>主服务</h2><span id="primaryStatus" class="key-state"></span></div>
           <div class="fields">
             <label>Provider<select id="preset"><option value="custom">自定义 / OpenAI 兼容</option>
-              <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="zhipu">智谱</option></select></label>
+              <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="zhipu">智谱 GLM</option></select></label>
             <label class="wide">API 地址<input id="base_url" type="url" required spellcheck="false" maxlength="2048" placeholder="https://api.example.com/v1"></label>
             <label class="wide">API Key<div class="key-input"><input id="api_key" type="password" autocomplete="new-password" maxlength="8192" placeholder="未配置" spellcheck="false">
               <button type="button" id="clear_api_key" class="command key-clear" title="清除主服务密钥" aria-label="清除主服务密钥" aria-pressed="false"><i data-lucide="trash-2"></i>清除</button></div></label>
@@ -47,6 +49,8 @@
           <div class="section-heading"><h2>备用服务</h2><label class="check"><input id="fallback_enabled" type="checkbox">启用</label><span id="fallbackStatus" class="key-state"></span></div>
           <div id="fallbackFields" hidden>
             <div class="fields">
+              <label>Provider<select id="fallbackPreset"><option value="custom">自定义 / OpenAI 兼容</option>
+                <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="zhipu">智谱 GLM</option></select></label>
               <label class="wide">API 地址<input id="fallback_base_url" type="url" spellcheck="false" maxlength="2048" placeholder="https://api.example.com/v1"></label>
               <label class="wide">API Key<div class="key-input"><input id="fallback_api_key" type="password" autocomplete="new-password" maxlength="8192" placeholder="未配置" spellcheck="false">
                 <button type="button" id="clear_fallback_api_key" class="command key-clear" title="清除备用密钥" aria-label="清除备用密钥" aria-pressed="false"><i data-lucide="trash-2"></i>清除</button></div></label>
@@ -59,6 +63,18 @@
             </div>
             <div id="fallbackResult" class="probe-result" role="status" aria-live="polite"></div>
           </div>
+        </section>
+        <section id="recordingSettings" aria-labelledby="recordingSettingsTitle">
+          <div class="section-heading"><h2 id="recordingSettingsTitle">会话录音与精转写</h2><span id="recordingConfigState" class="key-state" role="status"></span></div>
+          <div class="service-actions">
+            <label class="check"><input id="recordingEnabled" type="checkbox">保存会话录音</label>
+            <label class="check"><input id="recordingAuto" type="checkbox">结束后自动转写</label>
+          </div>
+          <div class="fields">
+            <label>本地语音模型<select id="recordingModel"><option value="large-v3">Whisper large-v3</option><option value="large-v3-turbo">Whisper large-v3-turbo</option><option value="medium">Whisper medium</option></select></label>
+            <label>计算设备<select id="recordingDevice"><option value="auto">优先 GPU，加载失败时使用 CPU</option><option value="cuda">GPU / CUDA</option><option value="cpu">CPU</option></select></label>
+          </div>
+          <div class="service-actions"><button type="button" id="recordingSave" class="command"><i data-lucide="save"></i>保存录音设置</button></div>
         </section>
         </div>
         <div class="save-bar"><label class="check"><input id="remember" type="checkbox" checked>新密钥在本机加密保存</label>

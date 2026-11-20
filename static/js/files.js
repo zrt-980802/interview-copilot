@@ -7,6 +7,7 @@ const fieldNames = {name:'名称',role:'角色',action:'做法',technology:'技�
 const processing = file => ['queued','parsing','indexing'].includes(file.status);
 let files = [], selected, current, view = 'all', contentView = 'overview', legacy = [], resumeMode;
 let listSequence = 0, detailSequence = 0, detailController, dirty = false, saving = false, pendingEnabled;
+let batch = [], uploadBusy = false;
 const node = (tag, cls, text) => {
   const element = document.createElement(tag); element.className = cls || '';
   if (text !== undefined) element.textContent = text;
@@ -34,13 +35,26 @@ function renderRows() {
     const select = node('button','file-select',file.title); select.type = 'button'; select.onclick = () => selectFile(file.id);
     description.append(select,node('div','file-original',file.name),node('div','file-size',size(file.bytes)));
     label.append(symbol(file.source_url ? 'github' : 'file-text'),description); cell.append(label);
+    if (file.status === 'error') {
+      description.append(node('div','file-row-error',file.error || '解析失败'));
+      const actions = node('div','file-row-actions');
+      if (!file.archived) {
+        const retry = node('button','command subtle','重新解析'); retry.type = 'button'; retry.prepend(symbol('rotate-cw'));
+        retry.disabled = saving; retry.onclick = () => retryFile(file.id); actions.append(retry);
+      }
+      description.append(actions);
+    }
     const state = node('td','status-' + file.status,file.archived ? '已归档' : statuses[file.status] || file.status);
     if (!file.archived && file.knowledge) state.append(node('div','analysis-label',file.knowledge.conflicts ? `${file.knowledge.conflicts} 项待核对` : analysisNames[file.knowledge.status]));
     const enabled = node('td','enable-cell'), checkbox = node('input'); checkbox.type = 'checkbox';
     checkbox.checked = pendingEnabled?.id === file.id ? pendingEnabled.value : file.enabled;
     checkbox.setAttribute('aria-label',`启用 ${file.name}`); checkbox.disabled = file.archived || file.status !== 'ready' || saving;
     checkbox.onchange = () => mutate(file.id,{enabled:checkbox.checked}); enabled.append(checkbox);
-    row.append(cell,node('td','kind-col',names[file.kind]),state,enabled); return row;
+    const actions = node('td','actions-col'), remove = node('button','icon delete-file');
+    remove.type = 'button'; remove.append(symbol('trash-2')); remove.title = '永久删除文件';
+    remove.setAttribute('aria-label',`删除文件 ${file.name}`);
+    remove.disabled = saving; remove.onclick = () => deleteFile(file); actions.append(remove);
+    row.append(cell,node('td','kind-col',names[file.kind]),state,enabled,actions); return row;
   }));
   const active = files.filter(file => !file.archived);
   $('totals').textContent = `${active.length} 份 · ${active.filter(file => file.enabled && file.status === 'ready').length} 份启用`;
@@ -88,7 +102,7 @@ function preview() {
 }
 function renderDetailControls() {
   $('fileDetail').setAttribute('aria-busy',String(saving));
-  $('archive').disabled = $('retry').disabled = saving;
+  $('archive').disabled = $('retry').disabled = $('deleteFile').disabled = saving;
   $('analyze').disabled = saving || !current || current.archived || !current.enabled || current.status !== 'ready' || ['queued','analyzing'].includes(current.knowledge?.status);
   for (const button of $('knowledgePanel').querySelectorAll('button[data-review]')) button.disabled = saving || !!current?.archived;
   for (const input of $('fileProperties').elements) input.disabled = !!current?.archived || saving;
@@ -201,19 +215,74 @@ async function mutate(id,changes) {
   } catch(error) { notice(error.message,true); }
   finally { saving = false; pendingEnabled = undefined; renderRows(); if (current) renderDetail(current); }
 }
-$('upload').onclick = () => { $('fileInput').multiple = $('uploadKind').value !== 'resume'; $('fileInput').click(); };
-$('fileInput').onchange = async () => {
-  const chosen = [...$('fileInput').files]; $('fileInput').value = ''; if (!chosen.length) return;
-  if (chosen.length > 20) { notice('每批最多 20 份参考资料',true); return; }
-  const body = new FormData(); for (const file of chosen) body.append('files',file); body.append('kind',$('uploadKind').value);
-  $('upload').disabled = true; $('uploadProgress').hidden = false; $('uploadProgress').textContent = `上传 ${chosen.length} 份文件…`;
+function uploadKind() {
+  $('fileInput').multiple = $('uploadKind').value !== 'resume';
+  $('uploadLabel').textContent = $('fileInput').multiple ? '批量上传' : '上传简历';
+}
+function renderBatch() {
+  const eligible = batch.filter(item => ['pending','failed'].includes(item.state));
+  const limit = $('batchKind').value === 'resume' ? 1 : 20;
+  const overLimit = batch.length > limit;
+  const counts = state => batch.filter(item => item.state === state).length;
+  $('batchStatus').textContent = uploadBusy ? `正在上传 ${counts('uploading')} 份文件…` :
+    [`已选择 ${batch.length} 份 · ${size(batch.reduce((total,item) => total + item.file.size,0))}`,
+      counts('accepted') ? `${counts('accepted')} 份已接收` : '', counts('duplicate') ? `${counts('duplicate')} 份已存在` : '',
+      counts('failed') ? `${counts('failed')} 份失败` : ''].filter(Boolean).join(' · ');
+  $('batchError').hidden = !overLimit;
+  $('batchError').textContent = overLimit ? (limit === 1 ? '简历每次只能上传 1 份' : '每批最多上传 20 份资料') : '';
+  $('batchClose').disabled = $('batchAdd').disabled = $('batchKind').disabled = uploadBusy;
+  $('batchAdd').disabled = uploadBusy || batch.length >= limit;
+  $('batchSubmit').disabled = uploadBusy || !eligible.length || overLimit;
+  $('batchSubmitLabel').textContent = eligible.length && eligible.every(item => item.state === 'failed') ? '重试失败文件' : '开始上传';
+  $('batchFiles').replaceChildren(...batch.map(item => {
+    const row = node('li','upload-entry'); row.dataset.state = item.state;
+    const info = node('div','upload-entry-name'); info.append(node('span','',item.file.name),node('small','',size(item.file.size)));
+    const status = node('span','upload-entry-status',item.error || {pending:'待上传',uploading:'上传中',accepted:'已接收',duplicate:'已存在',failed:'上传失败'}[item.state]);
+    const remove = node('button','icon'); remove.type = 'button'; remove.append(symbol('x'));
+    remove.title = '移出上传清单'; remove.setAttribute('aria-label',`移出上传清单 ${item.file.name}`); remove.disabled = uploadBusy;
+    remove.onclick = () => { batch = batch.filter(value => value !== item); renderBatch(); };
+    row.append(info,status,remove); return row;
+  })); icons();
+}
+$('uploadKind').onchange = uploadKind;
+$('upload').onclick = () => {
+  if (uploadBusy) return;
+  batch = []; $('batchKind').value = $('uploadKind').value; uploadKind(); $('fileInput').click();
+};
+$('fileInput').onchange = () => {
+  const chosen = [...$('fileInput').files]; $('fileInput').value = ''; if (!chosen.length || uploadBusy) return;
+  if (!$('batchDialog').open) { batch = []; $('batchKind').value = $('uploadKind').value; }
+  batch.push(...chosen.map(file => ({file,state:'pending',error:''})));
+  renderBatch(); if (!$('batchDialog').open) $('batchDialog').showModal();
+};
+$('batchAdd').onclick = () => { $('fileInput').multiple = $('batchKind').value !== 'resume'; $('fileInput').click(); };
+$('batchKind').onchange = () => { $('uploadKind').value = $('batchKind').value; uploadKind(); renderBatch(); };
+$('batchClose').onclick = () => $('batchDialog').close();
+$('batchDialog').addEventListener('cancel',event => { if (uploadBusy) event.preventDefault(); });
+$('batchSubmit').onclick = async () => {
+  const pending = batch.filter(item => ['pending','failed'].includes(item.state));
+  const limit = $('batchKind').value === 'resume' ? 1 : 20;
+  if (uploadBusy || !pending.length || batch.length > limit) return;
+  uploadBusy = true; $('upload').disabled = true;
+  const body = new FormData();
+  for (const item of pending) { item.state = 'uploading'; item.error = ''; body.append('files',item.file); }
+  body.append('kind',$('batchKind').value); renderBatch();
   try {
     const value = await api('/api/files/upload',{method:'POST',body});
-    const errors = value.results.filter(item => !item.ok), duplicates = value.results.filter(item => item.duplicate).length;
-    notice([`${value.results.length - errors.length - duplicates} 份已接收`,duplicates ? `${duplicates} 份已存在` : '',...errors.map(item => `${item.name}：${item.error}`)].filter(Boolean).join(' · '),!!errors.length);
+    pending.forEach((item,index) => {
+      const result = value.results[index];
+      item.state = !result?.ok ? 'failed' : result.duplicate ? 'duplicate' : 'accepted';
+      item.error = result?.ok ? '' : result?.error || '未收到文件结果，请重试';
+    });
+    const failed = batch.filter(item => item.state === 'failed');
+    notice([`${batch.filter(item => item.state === 'accepted').length} 份已接收`,
+      batch.some(item => item.state === 'duplicate') ? `${batch.filter(item => item.state === 'duplicate').length} 份已存在` : '',
+      ...failed.map(item => `${item.file.name}：${item.error}`)].filter(Boolean).join(' · '),!!failed.length);
     await load(); const accepted = value.results.find(item => item.ok); if (accepted) await selectFile(accepted.file.id);
-  } catch(error) { notice(error.message,true); }
-  finally { $('upload').disabled = false; $('uploadProgress').hidden = true; }
+  } catch(error) {
+    for (const item of pending) if (item.state === 'uploading') { item.state = 'failed'; item.error = error.message; }
+    notice(error.message,true);
+  } finally { uploadBusy = false; $('upload').disabled = false; renderBatch(); }
 };
 $('search').oninput = renderRows;
 for (const button of $('viewFilters').children) button.onclick = () => {
@@ -225,12 +294,29 @@ $('refresh').onclick = () => { load(); if (selected) loadDetail(selected,{quiet:
 $('fileTitle').oninput = $('fileKind').onchange = () => { dirty = true; };
 $('fileProperties').onsubmit = event => { event.preventDefault(); if (selected) mutate(selected,{title:$('fileTitle').value.trim(),kind:$('fileKind').value}); };
 $('archive').onclick = () => current && mutate(current.id,{archived:!current.archived});
-$('retry').onclick = async () => {
-  if (!current || saving) return; saving = true; renderRows(); renderDetailControls();
-  try { await api(`/api/files/${current.id}/retry`,{method:'POST'}); notice('已重新加入初始化队列'); await load(); }
+async function retryFile(id) {
+  if (saving) return; saving = true; renderRows(); renderDetailControls();
+  try { await api(`/api/files/${id}/retry`,{method:'POST'}); notice('已重新加入初始化队列'); await load(); if (selected === id) await loadDetail(id,{quiet:true}); }
   catch(error) { notice(error.message,true); }
   finally { saving = false; renderRows(); renderDetailControls(); }
-};
+}
+$('retry').onclick = () => current && retryFile(current.id);
+async function deleteFile(file) {
+  if (saving || !confirm(`永久删除“${file.name}”？原文件、解析正文及相关事实和检索索引将被删除，无法撤销。历史回答保留当时的快照。`)) return;
+  saving = true; renderRows(); renderDetailControls();
+  try {
+    await api('/api/files/' + file.id,{method:'DELETE'});
+    if (selected === file.id) {
+      detailController?.abort(); ++detailSequence; selected = current = undefined; dirty = false;
+      $('fileDetail').hidden = true; $('detailEmpty').hidden = false; $('detailState').textContent = '';
+      document.body.classList.remove('inspecting');
+      const url = new URL(location.href); url.searchParams.delete('file'); history.replaceState(null,'',url);
+    }
+    notice('文件已永久删除'); await load();
+  } catch(error) { notice(error.message,true); }
+  finally { saving = false; renderRows(); renderDetailControls(); }
+}
+$('deleteFile').onclick = () => current && deleteFile(current);
 $('overviewTab').onclick = () => { contentView = 'overview'; preview(); };
 $('textTab').onclick = () => { contentView = 'text'; preview(); };
 $('knowledgeTab').onclick = () => { contentView = 'knowledge'; preview(); };
@@ -259,6 +345,7 @@ $('githubForm').onsubmit = async event => {
 };
 icons(); await load();
 const initialKind = new URLSearchParams(location.search).get('kind'); if (names[initialKind]) $('uploadKind').value = initialKind;
+uploadKind();
 const initial = new URLSearchParams(location.search).get('file'); if (/^[a-f0-9]{32}$/.test(initial || '')) await selectFile(initial);
 setInterval(() => { if (!document.hidden) load({quiet:true}); },2000);
 document.addEventListener('visibilitychange',() => { if (!document.hidden) load({quiet:true}); });

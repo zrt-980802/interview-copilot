@@ -39,11 +39,11 @@ Windows:
 .\venv\Scripts\python.exe server.py
 ```
 
-The desktop workspace defaults to `http://127.0.0.1:8527`. Opening the page does not start recording; use the listen control. `启动面试辅助.bat` checks service readiness and opens the workspace.
+The desktop workspace defaults to `http://127.0.0.1:8527`. Opening the page does not start recording; use the listen control. `start-desktop.bat` checks service readiness and opens the workspace.
 
 macOS requires Python 3.11 or newer. Install and route BlackHole first, then double-click `run_macos.command`; the launcher creates `.venv` when needed, installs platform dependencies, creates `config.json` from the public example when missing, starts the service, and opens the workspace. See [macOS setup](docs/macos.md).
 
-For PC capture with phone display, run `后台手机模式.bat`, or `python server.py --mobile --auto-listen`. This starts PC loopback and microphone capture without opening a desktop browser. The launcher prints LAN addresses and a single-use pairing code. The desktop phone control also provides a QR code and revocation. Phone and desktop share the same runtime and active session.
+For PC capture with phone display, run `start-phone.bat`, or `python server.py --mobile --auto-listen`. This starts PC loopback and microphone capture without opening a desktop browser. The launcher prints LAN addresses and a single-use pairing code. The desktop phone control also provides a QR code and revocation. Phone and desktop share the same runtime and active session.
 
 See [phone setup and boundaries](docs/mobile-display.md). The current version remains a development prototype; real phone, LAN and audio acceptance is pending.
 
@@ -55,12 +55,22 @@ The settings control opens `/settings` for provider URL, API key, quick/detail m
 
 The microphone selector includes the system default, available input devices and off. The listen command starts both selected channels; devices can be switched during capture. Candidate speech is kept separate from AI suggestions and passed to follow-up questions and the current question's deep dives.
 
+Captured audio can be archived per interview, including silence, in separate microphone and system-audio WAV tracks. Use `结束面试` to stop capture and open the saved session in history for playback, local Whisper transcription, corrections and export. Model inference uses existing local weights only; it does not download models or upload recordings. See [session recording and local transcription](docs/session-recordings.md).
+
+For solo testing, pause capture, enable `麦克风提问测试` in the audio panel, choose a microphone and start listening. Only the microphone starts; its speech becomes interview questions and triggers answers. Disable the toggle while paused to return to candidate-context capture. This works with both speech pipelines, keeps the current session and phone pairing, survives page reloads, and defaults off when the service restarts.
+
 ## Development status
 
 The existing implementation remains in `server.py`, `copilot/`, and `static/`. A gradual v2 migration is planned so the legacy version remains usable during restructuring.
 
 - [v2 architecture design](docs/superpowers/specs/2026-09-23-v2-incremental-architecture-design.md)
 - [v2 implementation plan](.hermes/plans/2026-09-23_120000-v2-incremental-restructure.md)
+- [Continuous speech architecture design](docs/2026-11-19-speech-architecture-design.md)
+- [Speech implementation plan and acceptance gates](docs/2026-11-19-speech-implementation-plan.md)
+
+The continuous speech pipeline separates bounded ASR processing windows from complete questions. It is available through the audio settings after preparing the local speech models; the legacy pipeline remains the default. See [implementation evidence and limitations](docs/evidence/speech-v2-implementation.md).
+
+On macOS, both speech modes use the selected CoreAudio inputs. The continuous pipeline does not add a Windows-only capture path; prepare its pinned local models with `.venv/bin/python scripts/prepare_speech_models.py` before enabling it.
 
 ## Platform scope
 

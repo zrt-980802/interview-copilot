@@ -61,7 +61,9 @@ function render() {
     const option = document.createElement('option'); option.value = item.turn_id;
     option.textContent = `${index + 1}. ${item.question}`; return option;
   }));
-  if (!turn) { $('answers').replaceChildren(); return; }
+  if (!turn) {
+    $('question').textContent = ''; $('number').textContent = ''; $('answers').replaceChildren(); return;
+  }
   $('turns').value = selected;
   $('number').textContent = `问题 ${[...turns.keys()].indexOf(selected) + 1} / ${turns.size}`;
   $('question').textContent = turn.question;
@@ -90,6 +92,7 @@ function restore(event) {
   const pos = position(event.event_id);
   if (!pos || !Array.isArray(event.turns) || (pos.epoch === epoch && pos.sequence < sequence)) return;
   const changedSession = session !== event.session_id;
+  if (changedSession) { following = true; $('latest').setAttribute('aria-pressed', 'true'); }
   session = event.session_id; epoch = pos.epoch; sequence = pos.sequence; turns.clear(); tasks.clear();
   for (const turn of event.turns) {
     turns.set(turn.turn_id, turn);
@@ -113,6 +116,10 @@ function apply(event) {
   sequence = pos.sequence;
   if (event.type === 'cursor') return;
   if (event.type === 'capture_state') { capture(event.capture); return; }
+  if (event.type === 'session_reset') {
+    session = event.session_id; turns.clear(); tasks.clear(); selected = null; following = true;
+    $('latest').setAttribute('aria-pressed', 'true'); scheduleRender(true); return;
+  }
   if (event.session_id !== session) return;
   if (event.type === 'answer_start') {
     const previous = turns.get(event.turn_id);

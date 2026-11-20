@@ -22,5 +22,5 @@ if [[ ! -x "$PROJECT_DIR/.venv/bin/python" ]]; then
 fi
 
 echo "正在检查项目依赖..."
-"$PROJECT_DIR/.venv/bin/python" -m pip install -e "${PROJECT_DIR}[audio,pdf]"
+"$PROJECT_DIR/.venv/bin/python" -m pip install -e "${PROJECT_DIR}[audio,pdf,speech]"
 exec "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/tools/macos_launcher.py"

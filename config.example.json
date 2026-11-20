@@ -29,6 +29,24 @@
     "model": "whisper-1",
     "api_key_env": []
   },
+  "speech": {
+    "mode": "legacy",
+    "window_ms": 6000,
+    "max_window_ms": 12000,
+    "min_quiet_ms": 500,
+    "commit_quiet_ms": 1400,
+    "review_after_ms": 8000,
+    "pre_roll_ms": 300,
+    "audio_ring_ms": 120000,
+    "vad_threshold": 0.5,
+    "endpoint_threshold": 0.65
+  },
+  "recording": {
+    "enabled": true,
+    "auto_transcribe": true,
+    "model": "large-v3",
+    "device": "auto"
+  },
   "llm": {
     "base_url": "https://api.example.invalid/v1",
     "quick_model": "example-fast-model",

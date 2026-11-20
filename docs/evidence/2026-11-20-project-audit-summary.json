@@ -1,0 +1,209 @@
+{
+  "created_at": "2026-11-20T03:52:55.007736+00:00",
+  "git_head": "16e6bb256c83c3a6c7f900b6fb127317a3f5bec8",
+  "uncommitted_changes": true,
+  "production_logic_modified_by_this_audit": false,
+  "functional": {
+    "python": {
+      "tests": 468,
+      "failures": 0,
+      "errors": 0
+    },
+    "browser": {
+      "tests": 60,
+      "failures": 0,
+      "evidence": "node:test output checked during this run"
+    },
+    "initial_python_run": "467 passed, 1 Windows 10055 socket error; isolated mobile retest 15 passed; final full run 468 passed"
+  },
+  "answers": {
+    "primary": {
+      "total": 100,
+      "unique_cases": 80,
+      "status": {
+        "complete": 100
+      },
+      "findings": {},
+      "first_content_ms": {
+        "count": 100,
+        "p50": 641.0,
+        "p95": 938,
+        "max": 1125
+      },
+      "duration_ms": {
+        "count": 100,
+        "p50": 2062.5,
+        "p95": 3141,
+        "max": 4469
+      }
+    },
+    "attempt_models": {
+      "deepseek-chat": 95,
+      "local:clarification": 5
+    },
+    "primary_provider_first_content_ms": {
+      "count": 95,
+      "p50": 672,
+      "p95": 938,
+      "max": 1125
+    },
+    "fallback": {
+      "total": 7,
+      "unique_cases": 7,
+      "status": {
+        "complete": 7
+      },
+      "findings": {},
+      "first_content_ms": {
+        "count": 7,
+        "p50": 3719,
+        "p95": 9547,
+        "max": 9547
+      },
+      "duration_ms": {
+        "count": 7,
+        "p50": 11031,
+        "p95": 14297,
+        "max": 14297
+      }
+    },
+    "fallback_attempt_models": {
+      "glm-5.3-flash": 7
+    },
+    "semantic_pass_rate": null,
+    "semantic_review_note": "Formatting success is not correctness. See the dated audit report for observed semantic failures."
+  },
+  "speech": {
+    "broad": {
+      "total": 72,
+      "count_passed": 70,
+      "coverage_passed": 66,
+      "cer": {
+        "count": 60,
+        "p50": 0.03,
+        "p95": 0.24,
+        "max": 1.0
+      }
+    },
+    "targeted": {
+      "total": 38,
+      "count_passed": 18,
+      "coverage_passed": 16,
+      "cer": {
+        "count": 38,
+        "p50": 0.0,
+        "p95": 1.0,
+        "max": 1.0
+      }
+    },
+    "unique_replay_variants": 110,
+    "unique_TTS_scenarios": 25,
+    "recording_devices_opened": false,
+    "noise_categories": "generated silence, noise, hum and impulses; no real cough or real meeting recording"
+  },
+  "core": {
+    "invariants": 3000,
+    "invariant_failures": 0,
+    "intent": 32,
+    "intent_failures": 8,
+    "retrieval": 100,
+    "retrieval_failures": 0,
+    "retrieval_ms": {
+      "count": 100,
+      "p50": 31.0,
+      "p95": 32.0,
+      "max": 47.0
+    }
+  },
+  "retrieval_name_trap": {
+    "query": "Gephi-SK的高级封装，说明Function Call完整协议，schema怎么定义？",
+    "expected_source": "synthetic:protocol.md",
+    "actual_sources": [],
+    "passed": false
+  },
+  "http": {
+    "total": 500,
+    "errors": 0,
+    "ms": {
+      "count": 500,
+      "p50": 16.0,
+      "p95": 32.0,
+      "max": 47.0
+    }
+  },
+  "documents": {
+    "active_documents": 27,
+    "checked_quotes": 603,
+    "invalid_quotes": 0,
+    "queries": 15,
+    "queries_with_hits": 14,
+    "query_ms": {
+      "count": 15,
+      "p50": 78.0,
+      "p95": 156.0,
+      "max": 156.0
+    }
+  },
+  "hybrid": {
+    "queries": 15,
+    "semantic": {
+      "status": "ready",
+      "model": "BAAI/bge-m3",
+      "chunks": 1442,
+      "error": ""
+    },
+    "empty_results": 1,
+    "retrieval_seconds": [
+      0.188,
+      0.187,
+      0.188,
+      0.219,
+      0.188,
+      0.219,
+      0.203,
+      0.203,
+      0.203,
+      0.187,
+      0.203,
+      0.266,
+      0.266,
+      0.234,
+      0.219
+    ]
+  },
+  "service": {
+    "requests": 25,
+    "errors": 0,
+    "preserved": {
+      "session_id": true,
+      "history_len": true,
+      "listening": true,
+      "self_listening": true,
+      "audio_test_mode": true
+    },
+    "capture": {
+      "listening": false,
+      "self_listening": false,
+      "audio_test_mode": false
+    }
+  },
+  "ui": {
+    "desktop_pending": "问题草稿\n待确认 · 尚未确认说完\n确认提问",
+    "phone_question": "如何保证库存不超卖？",
+    "phone_has_pending_status": false,
+    "phone_projection_contains_draft": false,
+    "errors": []
+  },
+  "file_sha256": {
+    "scripts/audit_project.py": "3936e9c1da26eedbdc2626cc264e350b0c520c86734553cb5b87eabc94bc6b48",
+    "tests/evaluation/answer_cases.json": "e2703b38ce5bb0e781cb8e63cf915ff2e7c6eae1c03a7531658a20538ac8e162",
+    "tests/evaluation/project_audit_cases.json": "9763f804be3d4ea36f1677d3265f45f12a615e1eb6fc76502586675350623c79",
+    "tests/fixtures/speech/audio_cases.json": "a9a5628198f370816c316bd9c588af8f0abf3b8d81030cb352ca1b84da007e76",
+    "tests/fixtures/speech/audit_cases.json": "7a530409e74d20d8f91411ec6357b1ad884aecf20954caec89040ddb4fc332d5",
+    "src/interview_copilot/services/question_flow.py": "f0836794d69d1f8b4625cf928f4ac46cc008cb41f902a4023efebba7c4391214",
+    "src/interview_copilot/services/speech_turns.py": "9d38aea2305931beafe5e1306e583e1a9488f953f49b41f9e8a479df8137cf20",
+    "src/interview_copilot/services/answer_context.py": "5120ec343794200b0439e2a18675c7c1919f601872beaa1ad5c3df99584f31b1",
+    "src/interview_copilot/services/corpus.py": "ae440ab02d6d31fdb9c5623289d5bfe05d0f7522f8b02467bbceac483a50cd02",
+    "copilot/llm.py": "af3297630e90260fd39e8cdc959a98a485cb68c8e809e0c4ff261e48a7b56afc"
+  }
+}

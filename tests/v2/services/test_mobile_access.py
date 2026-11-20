@@ -71,3 +71,29 @@ def test_grants_are_bounded():
         access.exchange(access.issue("s")["code"], "s", "ninth")
     assert error.value.status == 409
     assert access.count("s") == 8
+
+
+def test_paired_devices_follow_sessions_without_extending_expiry_or_reusing_codes():
+    now = [0]
+    access = MobileAccess(clock=lambda: now[0], grant_ttl=300)
+    tokens = [access.exchange(access.issue("s1")["code"], "s1", str(i)) for i in range(2)]
+    other = access.exchange(access.issue("other")["code"], "other", "other")
+    code = access.issue("s1")["code"]
+    now[0] = 100
+    access.follow_session("s1", "s2")
+    assert access.count("s1") == 0 and access.count("s2") == 2
+    for token in tokens:
+        assert access.authorize(token, "s2")
+        assert not access.authorize(token, "s1")
+    assert access.authorize(other, "other") and not access.authorize(other, "s2")
+    assert access.challenge("s2")["code"] is None
+    with pytest.raises(PairingError):
+        access.exchange(code, "s2", "ip")
+    access.revoke(tokens[0])
+    access.follow_session("s2", "s3")
+    assert not access.authorize(tokens[0], "s3")
+    assert access.authorize(tokens[1], "s3")
+    now[0] = 300
+    access.follow_session("s3", "s4")
+    assert not access.authorize(tokens[1], "s4")
+    assert access.count("s4") == 0

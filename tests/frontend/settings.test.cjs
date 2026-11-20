@@ -21,6 +21,50 @@ async function ready(page) {
   await page.goto(base+'/settings');await page.locator('#fields:not([disabled])').waitFor();
 }
 
+test('provider inventory counts saved complete services, distinguishes disabled backup and offers GLM preset',{skip},async t=>{
+  const {page,request,errors}=await fixture(t);
+  async function save(){
+    const saved=page.waitForResponse(response=>response.url()===base+'/api/providers'&&response.request().method()==='POST');
+    await page.locator('#save').click();assert.equal((await saved).status(),200);
+    await page.locator('#fields:not([disabled])').waitFor();
+  }
+  const reset=await request.post(base+'/api/providers',{data:{base_url:'https://synthetic-primary.invalid/v1',
+    quick_model:'offline-primary',detail_model:'offline-primary',allow_anonymous:true,clear_api_key:true,
+    fallback_enabled:false,fallback_base_url:'',fallback_model:'',clear_fallback_api_key:true}});
+  assert.equal(reset.status(),200);
+  await ready(page);
+  assert.match(await page.locator('#providerCount').textContent(),/已配置 1 \/ 2.*已启用 1/);
+  await page.locator('#fallback_enabled').check();
+  await page.locator('#fallbackPreset').selectOption('zhipu');
+  assert.equal(await page.locator('#fallback_model').inputValue(),'glm-5.3');
+  assert.equal(await page.locator('#fallback_base_url').inputValue(),'https://open.bigmodel.cn/api/paas/v4');
+  await page.locator('#fallback_api_key').fill('synthetic-inventory-key');
+  await page.locator('#remember').uncheck();
+  assert.match(await page.locator('#providerCount').textContent(),/已配置 1 \/ 2/);
+  await save();
+  await page.reload();await page.locator('#fields:not([disabled])').waitFor();
+  assert.match(await page.locator('#providerCount').textContent(),/已配置 2 \/ 2.*已启用 2/);
+  assert.match(await page.locator('#providerInventory').textContent(),/备用智谱 GLM已启用/);
+  assert.equal(await page.locator('#fallback_api_key').inputValue(),'');
+  for(const [name,width,height] of [['desktop',1365,900],['390',390,844],['320',320,740]]){
+    await page.setViewportSize({width,height});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+    const count=await page.locator('#providerCount').boundingBox();
+    assert.ok(count.x>=0&&count.x+count.width<=width);
+    await screenshot(page,'provider-inventory-'+name);
+  }
+  await page.locator('#fallback_enabled').uncheck();
+  assert.match(await page.locator('#providerCount').textContent(),/已启用 2/);
+  await save();
+  assert.match(await page.locator('#providerCount').textContent(),/已配置 2 \/ 2.*已启用 1/);
+  await page.locator('#fallback_enabled').check();
+  await page.getByRole('button',{name:'清除备用密钥',exact:true}).click();
+  await save();
+  assert.match(await page.locator('#providerCount').textContent(),/已配置 1 \/ 2.*已启用 1/);
+  assert.match(await page.locator('#providerInventory').textContent(),/备用智谱 GLM配置未完成/);
+  assert.deepEqual(errors,[]);
+});
+
 test('provider configuration tests, lists models, saves and clears keys without echoing them',{skip},async t=>{
   const {page,request,errors}=await fixture(t);
   await ready(page);

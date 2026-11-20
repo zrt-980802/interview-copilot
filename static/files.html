@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <title>资料库 · 面试辅助</title>
+  <title>工作笔记</title>
   <link rel="stylesheet" href="/static/files.css">
   <link rel="stylesheet" href="/static/app-shell.css">
   <script src="/static/vendor/lucide.js" defer></script>
@@ -31,7 +31,7 @@
           <option value="reference">参考资料</option><option value="resume">简历</option>
           <option value="candidate">本人项目资料</option><option value="paper">论文</option><option value="jd">岗位说明</option>
         </select></label>
-        <button id="upload" class="command primary"><i data-lucide="upload"></i>上传文件</button>
+        <button id="upload" class="command primary"><i data-lucide="files"></i><span id="uploadLabel">批量上传</span></button>
         <button id="openGithub" class="command"><i data-lucide="github"></i>导入 GitHub</button>
         <input id="fileInput" type="file" multiple hidden accept=".pdf,.docx,.md,.markdown,.txt,.py,.js,.ts,.java,.go,.c,.cpp,.h,.hpp,.rs,.json,.yaml,.yml,.sql,.html,.css,.xml,.toml,.sh,.csv">
       </div>
@@ -45,7 +45,7 @@
       </div>
       <div id="listState" role="status"></div>
       <div class="file-table-wrap">
-        <table><thead><tr><th>文件</th><th class="kind-col">类型</th><th>状态</th><th>启用</th></tr></thead><tbody id="fileRows"></tbody></table>
+        <table><thead><tr><th>文件</th><th class="kind-col">类型</th><th>状态</th><th>启用</th><th class="actions-col">操作</th></tr></thead><tbody id="fileRows"></tbody></table>
       </div>
       <details id="legacyPanel" hidden><summary id="legacyHeading"></summary><div id="legacyFiles"></div></details>
     </main>
@@ -54,7 +54,7 @@
       <div id="detailState" role="status"></div>
       <div id="fileDetail" hidden>
         <div class="detail-heading"><h2 id="detailName"></h2></div>
-        <div class="document-actions"><a id="download" class="command subtle"><i data-lucide="download"></i>下载原文件</a><button id="archive" class="command subtle"><i data-lucide="archive"></i>归档文件</button></div>
+        <div class="document-actions"><a id="download" class="command subtle"><i data-lucide="download"></i>下载原文件</a><button id="archive" class="command subtle"><i data-lucide="archive"></i>归档文件</button><button id="deleteFile" class="command subtle"><i data-lucide="trash-2"></i>删除文件</button></div>
         <div id="fileMeta"></div>
         <a id="sourceLink" target="_blank" rel="noopener noreferrer" hidden></a>
         <ol id="initialization" aria-label="初始化状态"></ol>
@@ -77,6 +77,14 @@
       <label>公开文件链接<input id="githubUrl" type="url" required maxlength="2048" placeholder="https://github.com/owner/repo/blob/main/README.md"></label>
       <div id="githubError" role="status"></div><button id="importGithub" class="command" type="submit"><i data-lucide="download"></i>导入</button>
     </form>
+  </dialog>
+  <dialog id="batchDialog" aria-labelledby="batchTitle">
+    <div class="dialog-heading"><h2 id="batchTitle">批量上传</h2><button id="batchClose" class="icon" type="button" title="关闭" aria-label="关闭上传清单"><i data-lucide="x"></i></button></div>
+    <label class="batch-kind">资料类型<select id="batchKind"><option value="reference">参考资料</option><option value="resume">简历</option><option value="candidate">本人项目资料</option><option value="paper">论文</option><option value="jd">岗位说明</option></select></label>
+    <div id="batchStatus" role="status"></div>
+    <ul id="batchFiles" aria-label="上传文件清单"></ul>
+    <div id="batchError" class="error" role="status" hidden></div>
+    <div class="batch-actions"><button id="batchAdd" class="command" type="button"><i data-lucide="plus"></i>添加文件</button><button id="batchSubmit" class="command primary" type="button"><i data-lucide="upload"></i><span id="batchSubmitLabel">开始上传</span></button></div>
   </dialog>
   <dialog id="sourceDialog" aria-labelledby="sourceTitle">
     <div class="dialog-heading"><h2 id="sourceTitle">原文依据</h2><button id="closeSource" class="icon" title="关闭" aria-label="关闭原文"><i data-lucide="x"></i></button></div>

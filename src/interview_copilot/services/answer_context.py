@@ -10,24 +10,32 @@ import re
 
 from interview_copilot.services.corpus import clip_evidence, terms
 from interview_copilot.services.answer_content import context_sources
+from interview_copilot.services.dialogue import answer_style, response_plan, relevant_evidence
 
 
 class ContextBudgetExceeded(ValueError):
     pass
 
 
-def answer_scope(question, evidence, profile=""):
+def answer_scope(question, evidence, profile="", dialogue=None):
+    dialogue = dialogue or {}
+    style = answer_style(question)
     query = set(terms(question))
     project = any(item.get("kind") == "candidate_material" and
                   item.get("fact_check",{}).get("field") not in {"publication_status","period"} and
                   len(query.intersection(terms(item.get("fact_check",{}).get("subject",item.get("heading",""))))) >= 2
                   for item in evidence)
     personal = bool(re.search(r"本人|简历|经历|自我介绍|毕业|在读|你(?:以前|曾经|是否|有没有|已经|独立|在|负责|参与|做过)|"
-                              r"[你我]的(?:项目|角色|工作|背景|职责)|你.*(?:做过|负责过|上线过|参与过)|"
+                              r"[你我]的(?:项目|角色|工作|背景|职责)|你(?:主导|带领|做的|开发的|实现的|所在)|"
+                              r"你.*(?:做过|负责过|上线过|参与过)|"
                               r"\b(?:my|your)\s+(?:project|experience|work|role|background|resume)\b|\b(?:have|did) you\b",question,re.I))
+    personal = personal or style in {"experience", "introduction"}
+    personal = personal or (style == "hr" and bool(re.search(r"薪资|薪酬|待遇|离职|婚姻|未婚|已婚|住在哪|住哪里|通勤", question)))
     design = bool(re.search(r"假设|假如|如果(?:要|让|由)|设计(?:一个|一套)|如何设计|怎么设计|\bhow would\b|\bsuppose\b|\bdesign (?:a|an)\b",question,re.I))
     mode = "design" if design else "experience" if personal or project else "technical"
     scope = {"mode":mode,"model_knowledge_allowed":True,
+             "answer_style": style,
+             "response_plan": {**response_plan(question), "allow_direction": False},
              "reference_policy":"optional_references" if evidence else "model_knowledge",
              "knowledge_guidance":"通用知识可以直接作答；资料只提供相关补充，不是知识白名单。忽略关联低的片段，不因资料没有覆盖而拒答，不强行联系本人项目或虚构引用。"}
     if mode == "experience":
@@ -37,6 +45,9 @@ def answer_scope(question, evidence, profile=""):
         scope["boundary"] = "先说原文支持的做法范围，再用‘一种可行实现’解释机制。原文未明确的主键、阈值、校验和冲突裁决规则不能写成本人已实施。"
     if mode == "design":
         scope["boundary"] = "按题目约束自主提出方案、推导和取舍；缺少约束时明确合理假设，不要求资料中已有实现，不写成个人已完成的项目。"
+    if mode == "technical" and dialogue.get("project_followup"):
+        scope["mode"] = "project_method"
+        scope["boundary"] = "这是对前述项目方法的追问；只将有证据的实现作为本人做法，未记载的机制以可行方案解释。"
     if mode == "experience" and "graduation_date" in profile and "材料冲突" in profile:
         scope["temporal_boundary"] = "毕业时间有冲突，当前毕业/在读状态未确认。自我介绍不能断言当前在读或已毕业，也不要推荐未经确认的在读话术；可陈述材料支持的研究方向与论文情况。"
     return scope
@@ -44,7 +55,8 @@ def answer_scope(question, evidence, profile=""):
 
 def scope_reference(question, reference):
     reference = deepcopy(reference)
-    scope = answer_scope(question,reference.get("evidence",[]),reference.get("candidate_profile",""))
+    reference["evidence"] = relevant_evidence(question, reference.get("evidence", []), reference.get("dialogue_context"))
+    scope = answer_scope(question,reference.get("evidence",[]),reference.get("candidate_profile",""),reference.get("dialogue_context"))
     reference["answer_scope"] = scope
     if scope["mode"] in {"technical","design"}:
         reference["resume"] = ""

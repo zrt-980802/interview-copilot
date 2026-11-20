@@ -18,7 +18,7 @@ _EVENT_FIELDS = {
     "answer_start": ("question", "at"), "detail_start": ("direction", "at"),
     "answer_attempt": ("attempt", "model"), "answer_delta": ("attempt", "delta"),
     "answer_done": ("attempt", "full", "document"), "answer_error": ("attempt",),
-    "answer_cancelled": (), "capture_state": ("capture",),
+    "answer_cancelled": (), "capture_state": ("capture",), "session_reset": (),
 }
 _IDENTITY = ("session_id", "turn_id", "generation", "task_id", "level")
 
@@ -53,6 +53,7 @@ def display_event(event):
 
 def display_snapshot(snapshot, capture):
     value = deepcopy(snapshot)
+    value.pop("speech_drafts", None)
     value["capture"] = capture
     for turn in value["turns"]:
         for answer in turn["answers"]:

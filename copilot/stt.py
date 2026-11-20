@@ -5,11 +5,14 @@ The endpoint accepts POST /audio/transcriptions and may return either
 {"text": "..."} JSON or plain text. API keys are optional for local services.
 """
 import os
+import io
+import wave
 from typing import Any
 
 import httpx
 
 from interview_copilot.providers.http_policy import trust_env_for_url
+from interview_copilot.domain.speech import parse_recognition
 
 
 class STTClient:
@@ -30,10 +33,18 @@ class STTClient:
         self.client.close()
 
     def transcribe(self, wav_bytes: bytes, prompt: str = "", language: str = "zh") -> str:
+        return self._request(wav_bytes, prompt, language).text
+
+    def transcribe_result(self, wav_bytes: bytes, prompt: str = "", language: str = "zh"):
+        return self._request(wav_bytes, prompt, language, detailed=True)
+
+    def _request(self, wav_bytes, prompt, language, detailed=False):
         headers = {}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         data = {"model": self.model}
+        if detailed:
+            data["response_format"] = "verbose_json"
         if language:
             data["language"] = language
         if prompt:
@@ -53,7 +64,13 @@ class STTClient:
         except httpx.HTTPStatusError as exc:
             raise RuntimeError(f"语音转写服务返回 HTTP {response.status_code}，请检查转写服务与模型配置") from exc
         content_type = response.headers.get("content-type", "")
+        audio_seconds = None
+        if detailed:
+            try:
+                with wave.open(io.BytesIO(wav_bytes), "rb") as audio:
+                    audio_seconds = audio.getnframes() / audio.getframerate()
+            except (wave.Error, EOFError):
+                pass
         if "json" in content_type:
-            payload = response.json() or {}
-            return str(payload.get("text", "")).strip()
-        return response.text.strip()
+            return parse_recognition(response.json(), audio_seconds=audio_seconds)
+        return parse_recognition(response.text)

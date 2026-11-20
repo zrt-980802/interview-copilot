@@ -209,3 +209,40 @@ def test_semantic_question_focuses_on_mechanism_while_document_name_limits_sourc
     assert [item["source"] for item in evidence] == ["notes:method.md"]
     index.search("MethodA")
     assert questions[-1] == "MethodA"
+
+
+def test_damaged_name_matching_wrong_title_does_not_remove_protocol_passage(index):
+    index.update_documents('test', [
+        {**document('wrong', '# Gephi-SK\n图形编辑与可视化布局。'), 'title': 'Gephi-SK'},
+        {**document('protocol', '# 工具调用规范\nFunction Call 使用 schema 定义参数，以 tool 角色返回调用结果。'), 'title': '工具调用规范'},
+    ])
+    evidence = index.search('Gephi-SK的高级封装，说明Function Call完整协议，schema怎么定义？')
+    assert any(item['source'] == 'notes:protocol.md' for item in evidence)
+
+
+def test_generic_term_shared_by_most_titles_is_not_a_named_source_filter(index):
+    index.update_documents('test', [
+        {**document('runtime', '# Agent Runtime\n循环、状态和停止条件。'), 'title': 'Agent Runtime'},
+        {**document('trace', '# Agent Observability\nAgent Trace 应记录输入、工具调用、状态迁移和结果。'),
+         'title': 'Agent Observability'},
+        {**document('memory', '# Agent Memory\n记忆写入和冲突处理。'), 'title': 'Agent Memory'},
+    ])
+
+    evidence = index.search('Agent Trace 应该记录什么？')
+
+    assert any(item['source'] == 'notes:trace.md' for item in evidence)
+
+
+def test_repeated_named_title_records_still_scope_to_that_source(index):
+    index.update_documents('test', [
+        {**document('method-source', '# MethodA\nA general method overview.', source='notes:method.md'),
+         'title': 'MethodA'},
+        {**document('method-fact', 'Exact source quote.', source='notes:method.md'),
+         'title': 'MethodA', 'search_text': 'MethodA 实体盲重写 检索键'},
+        {**document('other', '# Other\n实体检索的其他方法。'), 'title': 'Other'},
+    ])
+
+    evidence = index.search('MethodA 实体盲重写检索键')
+
+    assert all(item['source'] == 'notes:method.md' for item in evidence)
+    assert evidence[0]['excerpt'] == 'Exact source quote.'

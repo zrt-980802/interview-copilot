@@ -1,0 +1,108 @@
+{
+  "format": "synthetic-speech-events-v1",
+  "cases": [
+    {
+      "id": "long-55-seconds",
+      "description": "Continuous question crosses multiple 18 second windows.",
+      "expected": "假设有三年的财报数据， 我们需要按公司和期间核对指标口径， 再计算利润率，分析下降原因并给出证据，你会怎样实现？",
+      "not_before_ms": 55500,
+      "events": [
+        {"at": 0, "type": "speech", "end": 0},
+        {"at": 18000, "type": "speech", "end": 18000},
+        {"at": 18000, "type": "window", "seq": 1, "start": 0, "end": 18000},
+        {"at": 18500, "type": "transcript", "seq": 1, "text": "假设有三年的财报数据，"},
+        {"at": 36000, "type": "speech", "end": 36000},
+        {"at": 36000, "type": "window", "seq": 2, "start": 18000, "end": 36000},
+        {"at": 36500, "type": "transcript", "seq": 2, "text": "我们需要按公司和期间核对指标口径，"},
+        {"at": 55000, "type": "speech", "end": 55000},
+        {"at": 55000, "type": "window", "seq": 3, "start": 36000, "end": 55000},
+        {"at": 55000, "type": "quiet"},
+        {"at": 55500, "type": "eot", "probability": 0.95},
+        {"at": 56500, "type": "transcript", "seq": 3, "text": "再计算利润率，分析下降原因并给出证据，你会怎样实现？"}
+      ]
+    },
+    {
+      "id": "pause-six-seconds",
+      "description": "An incomplete condition is followed by a six second pause.",
+      "expected": "如果要支持多租户， 怎么确保检索和缓存不会泄漏其他租户的数据？",
+      "not_before_ms": 12500,
+      "events": [
+        {"at": 0, "type": "speech", "end": 0},
+        {"at": 3000, "type": "speech", "end": 3000},
+        {"at": 3000, "type": "window", "seq": 1, "start": 0, "end": 3000},
+        {"at": 3000, "type": "quiet"},
+        {"at": 3500, "type": "transcript", "seq": 1, "text": "如果要支持多租户，"},
+        {"at": 3600, "type": "eot", "probability": 0.1},
+        {"at": 9000, "type": "speech", "end": 9000},
+        {"at": 12000, "type": "speech", "end": 12000},
+        {"at": 12000, "type": "window", "seq": 2, "start": 3000, "end": 12000},
+        {"at": 12000, "type": "quiet"},
+        {"at": 12300, "type": "transcript", "seq": 2, "text": "怎么确保检索和缓存不会泄漏其他租户的数据？"},
+        {"at": 12500, "type": "eot", "probability": 0.96}
+      ]
+    },
+    {
+      "id": "late-final-transcript",
+      "description": "Endpoint is ready while the last ASR window is still pending.",
+      "expected": "解释消息幂等， 并说明不能只依赖缓存的原因。",
+      "not_before_ms": 10000,
+      "events": [
+        {"at": 0, "type": "speech", "end": 0},
+        {"at": 3000, "type": "speech", "end": 3000},
+        {"at": 3000, "type": "window", "seq": 1, "start": 0, "end": 3000},
+        {"at": 3500, "type": "transcript", "seq": 1, "text": "解释消息幂等，"},
+        {"at": 6000, "type": "speech", "end": 6000},
+        {"at": 6000, "type": "window", "seq": 2, "start": 3000, "end": 6000},
+        {"at": 6000, "type": "quiet"},
+        {"at": 6500, "type": "eot", "probability": 0.99},
+        {"at": 10000, "type": "transcript", "seq": 2, "text": "并说明不能只依赖缓存的原因。"}
+      ]
+    },
+    {
+      "id": "out-of-order-windows",
+      "description": "The tail arrives before the middle window.",
+      "expected": "先谈一致性， 再谈失败恢复， 最后说明如何验证。",
+      "not_before_ms": 9000,
+      "events": [
+        {"at": 0, "type": "speech", "end": 0},
+        {"at": 2000, "type": "speech", "end": 2000},
+        {"at": 2000, "type": "window", "seq": 1, "start": 0, "end": 2000},
+        {"at": 2500, "type": "transcript", "seq": 1, "text": "先谈一致性，"},
+        {"at": 4000, "type": "speech", "end": 4000},
+        {"at": 4000, "type": "window", "seq": 2, "start": 2000, "end": 4000},
+        {"at": 6000, "type": "speech", "end": 6000},
+        {"at": 6000, "type": "window", "seq": 3, "start": 4000, "end": 6000},
+        {"at": 6000, "type": "quiet"},
+        {"at": 6500, "type": "eot", "probability": 0.99},
+        {"at": 7000, "type": "transcript", "seq": 3, "text": "最后说明如何验证。"},
+        {"at": 9000, "type": "transcript", "seq": 2, "text": "再谈失败恢复，"}
+      ]
+    },
+    {
+      "id": "background-only",
+      "description": "Interview scheduling is context, not a question.",
+      "expected": null,
+      "events": [
+        {"at": 0, "type": "speech", "end": 0},
+        {"at": 3000, "type": "speech", "end": 3000},
+        {"at": 3000, "type": "window", "seq": 1, "start": 0, "end": 3000},
+        {"at": 3000, "type": "quiet"},
+        {"at": 3300, "type": "transcript", "seq": 1, "text": "我们后续还有一次终面，然后两周培训。"},
+        {"at": 3600, "type": "eot", "probability": 0.99}
+      ]
+    },
+    {
+      "id": "repeated-hallucination",
+      "description": "Repetition cannot become a question even if EOT is confident.",
+      "expected": null,
+      "events": [
+        {"at": 0, "type": "speech", "end": 0},
+        {"at": 2000, "type": "speech", "end": 2000},
+        {"at": 2000, "type": "window", "seq": 1, "start": 0, "end": 2000},
+        {"at": 2000, "type": "quiet"},
+        {"at": 2300, "type": "transcript", "seq": 1, "text": "博士博士博士博士博士博士博士博士"},
+        {"at": 2600, "type": "eot", "probability": 0.99}
+      ]
+    }
+  ]
+}

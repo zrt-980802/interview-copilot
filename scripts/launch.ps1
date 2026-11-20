@@ -95,6 +95,7 @@ if ($Mode -eq 'Desktop') {
     if (!$mobile.enabled) { throw 'The running service has no phone listener. Stop that service and launch Phone mode again.' }
     $captureState = Invoke-LocalJson -Uri "$desktopUrl/api/state" -TimeoutSec 5
     foreach ($source in @('loopback', 'mic')) {
+        if ($captureState.audio_test_mode -and $source -eq 'loopback') { continue }
         if (($source -eq 'loopback' -and $captureState.listening) -or ($source -eq 'mic' -and $captureState.self_listening)) { continue }
         $deviceKey = if ($source -eq 'mic') { 'mic_device_index' } else { 'loopback_device_index' }
         $captureBody = @{ source = $source }

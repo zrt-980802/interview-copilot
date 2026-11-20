@@ -68,6 +68,27 @@ def test_initialization_failure_retry_and_single_resume_validation(legacy_server
     assert server.resume_text() == 'synthetic resume'
 
 
+@pytest.mark.parametrize('state', ['error', 'ready', 'queued', 'disabled', 'archived'])
+def test_file_deletion_is_local_and_removes_all_states(legacy_server, state):
+    s = legacy_server
+    client = TestClient(s.app, base_url='http://127.0.0.1')
+    identity = client.post('/api/files/upload', data={'kind':'reference'},
+                           files={'files':('delete.txt', b' ' if state == 'error' else b'Unique reference describing PostgreSQL query optimization.')}).json()['results'][0]['file']['id']
+    if state != 'queued':
+        s.run_worker()
+    if state == 'disabled':
+        client.patch('/api/files/' + identity, json={'enabled': False})
+    elif state == 'archived':
+        client.patch('/api/files/' + identity, json={'archived': True})
+    assert client.delete('/api/files/' + identity, headers={'origin':'https://external.invalid'}).status_code == 403
+    assert client.delete('/api/files/' + identity).status_code == 200
+    assert client.get('/api/files/' + identity).status_code == 404
+    assert client.get('/api/files/' + identity + '/download').status_code == 404
+    if state == 'queued':
+        s.run_worker()
+    assert not s._RUNTIME.library.list() and not s._RUNTIME.corpus.search('PostgreSQL')
+
+
 def test_github_urls_are_limited_to_specific_public_markdown_files():
     canonical,name = github_markdown_url('https://github.com/example/project/blob/main/docs/readme.md?plain=1#section')
     assert canonical == 'https://raw.githubusercontent.com/example/project/main/docs/readme.md' and name == 'readme.md'

@@ -430,6 +430,7 @@ class AudioEngine:
         self.stt_base_url = stt_base_url.rstrip("/")
         self.stt_model = stt_model
         self.status_cb = status_cb or (lambda **kw: None)
+        self.recording_sink = None
 
         self._thread: threading.Thread | None = None
         self._stop_flag = threading.Event()
@@ -473,6 +474,14 @@ class AudioEngine:
                             paper_titles: list | None = None):
         """外部注入简历/JD/论文标题，转写 prompt 自动带上专名（提升识别率）。"""
         self._hotword_ctx = (resume or "", jd or "", paper_titles or [])
+
+    def set_speaker_role(self, speaker):
+        if speaker not in {"interviewer", "self"}:
+            raise ValueError("invalid speaker role")
+        if self.is_running():
+            raise RuntimeError("pause capture before changing its role")
+        self.invalidate_pending()
+        self.speaker_tag = speaker
 
     # ---------- 对外控制 ----------
     def _pick_device(self, device_index: int | None):
@@ -623,12 +632,30 @@ class AudioEngine:
         self.stats["errors"] += 1
         self.status_cb(type="status", level="error", message=msg)
 
+    def _record_raw(self, raw, rate, channels):
+        sink = self.recording_sink
+        if sink:
+            try:
+                sink(self.mode, raw, rate, channels, self.speaker_tag)
+            except Exception:
+                self.stats['recording_errors'] = self.stats.get('recording_errors', 0) + 1
+
+    def _record_queued_raw(self, raw, rate, channels):
+        """Record sources whose capture callback is outside this engine."""
+        if self.audio_source is not None or sys.platform == "darwin":
+            self._record_raw(raw, rate, channels)
+
+    def _capture_gap(self):
+        self.stats["capture_gaps"] = self.stats.get("capture_gaps", 0) + 1
+
     def _open_stream(self, raw_q):
         """在管家线程打开真实设备流；模拟源不需要设备。"""
         if self.audio_source is not None:
             return None, self.audio_source.sample_rate, self.audio_source.channels
         if sys.platform == "darwin":
-            return _coreaudio().open_input_stream(self.device_index, raw_q)
+            return _coreaudio().open_input_stream(
+                self.device_index, raw_q, on_gap=self._capture_gap
+            )
         """在管家线程打开流。返回 (stream, src_rate, chans)。"""
         def _open():
             dev_info = _PA.get_device_info_by_index(self.device_index)
@@ -636,10 +663,13 @@ class AudioEngine:
             chans = min(2, int(dev_info.get("maxInputChannels") or 2))
 
             def _cb(in_data, frame_count, time_info, status_flags):
+                self._record_raw(in_data, src_rate, chans)
+                if status_flags:
+                    self.stats["capture_gaps"] = self.stats.get("capture_gaps", 0) + 1
                 try:
                     raw_q.put_nowait(in_data)
                 except queue.Full:
-                    pass
+                    self.stats["capture_gaps"] = self.stats.get("capture_gaps", 0) + 1
                 return (None, pw.paContinue)
 
             stream = _PA.open(
@@ -807,6 +837,7 @@ class AudioEngine:
                     raw = None
 
                 if raw is not None and len(raw) > 0:
+                    self._record_queued_raw(raw, src_rate, chans_for_mix)
                     samples = np.frombuffer(raw, dtype=np.int16)
                     if chans_for_mix:
                         mono = samples.reshape(-1, chans_for_mix).mean(axis=1)

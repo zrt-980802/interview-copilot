@@ -16,6 +16,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from interview_copilot.providers.chat_options import chat_request_options
+
 
 class ProviderSettingsError(ValueError):
     pass
@@ -119,11 +121,20 @@ class ProviderSettings:
         with self._lock:
             config,keys = self.snapshot()
             result = {name:config.get(name,False if name.endswith(("anonymous","enabled")) else "") for name in self.FIELDS}
+            slots = []
             for name,prefix in (("primary",""),("fallback","fallback_")):
                 result[prefix + "key_set"] = bool(keys[name])
                 result[prefix + "key_source"] = ("unavailable" if name in self._errors else "saved" if name in self._persisted
                     else "session" if self._keys.get(name) else "environment" if keys[name] else "none")
-            return {**result,"revision":self.revision,"credential_storage":"windows-dpapi"}
+                required = ("base_url","quick_model","detail_model") if name == "primary" else ("fallback_base_url","fallback_model")
+                configured = (all(isinstance(config.get(field),str) and config[field].strip() for field in required)
+                              and bool(keys[name] or config.get(prefix + "allow_anonymous")))
+                slots.append({"channel":name,"configured":configured,
+                              "enabled":name == "primary" or bool(config["fallback_enabled"])})
+            summary = {"configured_count":sum(slot["configured"] for slot in slots),
+                       "enabled_count":sum(slot["configured"] and slot["enabled"] for slot in slots),
+                       "capacity":len(slots),"slots":slots}
+            return {**result,"revision":self.revision,"credential_storage":"windows-dpapi","provider_summary":summary}
 
     @staticmethod
     def _url(value):
@@ -225,8 +236,7 @@ async def probe_provider(change,*,channel="primary",models=False,transport=None)
                 response = await client.post(base + "/chat/completions",headers=headers,json={
                     "model":config["quick_model" if channel=="primary" else "fallback_model"],
                     "messages":[{"role":"user","content":"Reply with OK."}],"max_tokens":16,"stream":False,
-                    **({name:value for name,value in config.get("provider_options",{}).items()
-                        if name in {"thinking","enable_thinking","reasoning_effort"}} if channel == "primary" else {})})
+                    **chat_request_options(config,channel)})
             if response.status_code != 200:
                 raise ProviderSettingsError(f"服务返回 HTTP {response.status_code}，请检查地址、密钥和模型权限")
             value = response.json()

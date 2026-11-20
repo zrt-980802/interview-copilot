@@ -69,7 +69,7 @@ Windows 的系统声音使用 WASAPI loopback。macOS 的系统声音使用 Blac
 | `merge.continuation_ms` | `merge.continuation_ms` | `server.py`；已出题后的续段合并窗口 | `0` 表示关闭 |
 | `stt.url` | `stt.url` | `server.py` → `AudioEngine`；STT base URL | 当前应用使用键名 `url`，不要改成 `base_url`；localhost 示例保留 `/v1` |
 | `stt.model` | `stt.model` | `server.py` → `STTClient`；转写模型 | 使用 STT 服务实际支持的模型名 |
-| `stt.server_dir` | 同名 | `scripts/launch.ps1`；可选的本地 STT 项目目录 | 包含 `stt_server.py` 和 `venv/Scripts/python.exe`；环境变量 `INTERVIEW_COPILOT_STT_DIR` 优先，仅在 STT URL 为回环地址时用于自启 |
+| `stt.server_dir` | 同名 | `scripts/launch.ps1`；可选的本地 STT 项目目录 | Windows 使用 `venv/Scripts/python.exe`，macOS 录音精转写复用 `venv/bin/python`；环境变量 `INTERVIEW_COPILOT_STT_DIR` 优先，仅 Windows 启动器在 STT URL 为回环地址时用于自启 |
 | `stt.api_key_env` | `stt.api_key_env` | `server.py` → `STTClient`；依次查找密钥 | 填环境变量名数组；本地无鉴权 STT 可用空数组 |
 | `llm.base_url` | `llm.base_url` | `copilot/llm.py`；主 OpenAI-compatible endpoint | 将模板占位 URL 替换为自己的 provider URL |
 | `llm.quick_model` | `llm.quick_model` | `copilot/llm.py`；快速回答模型 | 填 provider 实际模型标识；为空时进入通用模型回退逻辑 |
@@ -128,7 +128,7 @@ python server.py
 ## 当前兼容性注意事项
 
 - 当前 `server.py` 在 lifespan 启动时读取配置并装配资源，导入模块不启动采集或打开数据库。缺失必需配置仍会使启动失败。
-- `启动面试辅助.bat` 和 `后台手机模式.bat` 使用 `scripts/launch.ps1`，读取配置端口并检查主服务身份和就绪状态。STT URL 为本机时，无论主服务是否已运行，都会检查 STT `/models`；不可用时按环境变量 `INTERVIEW_COPILOT_STT_DIR` 或 `stt.server_dir` 启动已有服务并等待 API 就绪。目录未配置时需自行启动 STT；STT 未就绪时电脑模式提示仍可手动提问，手机模式会拒绝自动采集。
+- `start-desktop.bat` 和 `start-phone.bat` 使用 `scripts/launch.ps1`，读取配置端口并检查主服务身份和就绪状态。STT URL 为本机时，无论主服务是否已运行，都会检查 STT `/models`；不可用时按环境变量 `INTERVIEW_COPILOT_STT_DIR` 或 `stt.server_dir` 启动已有服务并等待 API 就绪。目录未配置时需自行启动 STT；STT 未就绪时电脑模式提示仍可手动提问，手机模式会拒绝自动采集。
 - STT 的 `localhost`、`127.0.0.0/8` 和 `::1` 请求绕过环境与 Windows 系统代理，防止本机服务被代理成 502；远端 STT 继续保留原代理策略。启动器管理本机服务的 HTTP 请求也直接访问回环。`/models` 可用只证明 API 已启动，不代表模型已完成加载或真实转写验收。
 - `stt.url` 是应用配置键，而 `STTClient` 构造参数内部叫 `base_url`。这是现有适配关系，不是两个都要配置。
 - macOS 设备列表来自 CoreAudio。系统声音选择器只显示 BlackHole、Loopback、Background Music、Soundflower 或名称包含 virtual 的输入；普通麦克风仍显示在麦克风选择器中。
@@ -173,6 +173,12 @@ M3-4 增加 Answer Document v1，接口和事实检查语义见 [结构说明](a
 M4-1 增加 `qrcode` 依赖和本地 Lucide 图标。普通桌面启动不自动采集；`--auto-listen` 在服务 lifespan 中启动电脑的两个音频通道，不依赖页面。手机监听器只提供显示、配对和退出配对，不共享电脑的完整静态目录、管理 API 或背景材料快照。具体配置、配对有效期和验证范围见 [手机显示说明](mobile-display.md)。
 
 M4-3 增加电脑 `/files` 资料库，新上传和公开 GitHub Markdown 经本地解析、概览、分块及索引后参与按题检索。原文件、处理状态和开关保存于 `data/documents/`，无需新增配置；PDF 仍使用现有 `pdf` 安装依赖。GitHub 导入遵循进程的代理配置，不使用模型 key 或自动读取仓库 token。已有简历/论文/材料保留原链路，没有自动迁移原文件。类型、限额和验证范围见 [资料库说明](document-library.md)。
+## Provider 概览
+
+模型设置页顶部显示已保存的 Provider 数量、已启用数量以及主用/备用服务名称。目前最多两个服务位；按服务配置计数，同一厂商的两套独立主备配置也分别计入。地址、该通道所需模型以及密钥（或明确勾选无需认证）齐全才算已配置；停用备用服务仍保留配置计数，缺失或无法解密的密钥不计入完整配置。计数不是连接健康认证，实际可用性需点击测试连接确认。未保存的表单编辑不改变顶部计数。
+
+主用和备用均可选择智谱 GLM 预设；API 地址为 `https://open.bigmodel.cn/api/paas/v4`，具体模型以账号的模型列表和连接测试为准。BigModel 主备通道和连接测试默认沿用 `llm.disable_thinking=true`，发送 `thinking.type=disabled`；其他 Provider 不自动接收该参数，主服务专属选项不会传给不同的备用服务。密钥仍只在本机用 Windows DPAPI 保存，页面只显示已配置状态。
+
 ## 资料理解与语义检索
 
 `knowledge.enabled` 默认 `true`：正文就绪后调用当前回答 Provider 生成摘要、事实与项目记录，分段正文会发送给该服务。`knowledge.semantic_enabled` 默认 `true`，`knowledge.semantic_model` 默认为 `BAAI/bge-m3`，也可填写本地 SentenceTransformer 模型目录。

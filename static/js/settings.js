@@ -4,10 +4,33 @@ const fields = ['base_url','quick_model','detail_model','allow_anonymous','fallb
 const presets = {
   openai:{base_url:'https://api.openai.com/v1',quick_model:'gpt-4.1-mini',detail_model:'gpt-4.1'},
   deepseek:{base_url:'https://api.deepseek.com/v1',quick_model:'deepseek-chat',detail_model:'deepseek-chat'},
-  zhipu:{base_url:'https://open.bigmodel.cn/api/paas/v4',quick_model:'glm-4-flash',detail_model:'glm-4-plus'}
+  zhipu:{base_url:'https://open.bigmodel.cn/api/paas/v4',quick_model:'glm-5.3-flash',detail_model:'glm-5.3'}
 };
 let revision, busy = false, loaded = false;
 const cleared = {api_key:false,fallback_api_key:false};
+function presetFor(url) {
+  return Object.keys(presets).find(key=>presets[key].base_url===(url||'').replace(/\/+$/,''))||'custom';
+}
+function providerName(url) {
+  const name={openai:'OpenAI',deepseek:'DeepSeek',zhipu:'智谱 GLM'}[presetFor(url)];
+  if(name)return name;
+  try{return new URL(url).hostname;}catch{return '未设置地址';}
+}
+function showInventory(value) {
+  const summary=value.provider_summary;
+  if(!summary){$('providerCount').textContent='';$('providerInventory').hidden=true;return;}
+  $('providerCount').textContent=`已配置 ${summary.configured_count} / ${summary.capacity} 个 Provider · 已启用 ${summary.enabled_count} 个`;
+  $('providerInventory').replaceChildren(...summary.slots.map(slot=>{
+    const prefix=slot.channel==='primary'?'':'fallback_',item=document.createElement('li');
+    const role=document.createElement('span'),name=document.createElement('strong'),state=document.createElement('span');
+    role.className='provider-role';role.textContent=slot.channel==='primary'?'主用':'备用';
+    name.textContent=providerName(value[prefix+'base_url']);
+    state.className='provider-state'+(slot.configured&&slot.enabled?' enabled':'');
+    state.textContent=!slot.configured?'配置未完成':slot.enabled?'已启用':'未启用';
+    item.append(role,name,state);return item;
+  }));
+  $('providerInventory').hidden=false;
+}
 function notice(text,error=false) { $('notice').textContent=text; $('notice').classList.toggle('error',error); }
 async function request(path, body) {
   const response = await fetch('/api/providers'+path,{method:body ? 'POST':'GET',cache:'no-store',
@@ -33,7 +56,9 @@ function show(value) {
     cleared[key]=false;$('clear_'+key).setAttribute('aria-pressed','false');
   }
   $('remember').checked=value.key_source!=='session';
-  $('preset').value=Object.keys(presets).find(key=>presets[key].base_url===value.base_url)||'custom';
+  $('preset').value=presetFor(value.base_url);
+  $('fallbackPreset').value=presetFor(value.fallback_base_url);
+  showInventory(value);
   $('mode').hidden=!value.preview;fallback();
 }
 function payload() {
@@ -53,6 +78,10 @@ async function load() {
 $('reload').onclick=load;
 $('fallback_enabled').onchange=fallback;
 $('preset').onchange=()=>{const value=presets[$('preset').value];if(value)for(const [id,text] of Object.entries(value))$(id).value=text;};
+$('fallbackPreset').onchange=()=>{
+  const value=presets[$('fallbackPreset').value];
+  if(value){$('fallback_base_url').value=value.base_url;$('fallback_model').value=value.detail_model;}
+};
 for(const key of ['api_key','fallback_api_key']) {
   $('clear_'+key).onclick=()=>{
     cleared[key]=!cleared[key];$('clear_'+key).setAttribute('aria-pressed',String(cleared[key]));

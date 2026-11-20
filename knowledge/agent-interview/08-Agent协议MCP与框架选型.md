@@ -12,7 +12,7 @@ MCP Host 是面向用户的应用或 Agent 运行时，管理模型、权限和�
 
 模型可以建议调用 Tool，但 Host 才负责决定是否将请求发给 Server。Server 返回的名称、描述和内容都不是高优先级指令，也不因为走了 MCP 就可信。
 
-### MCP 是不是 Function Calling
+### MCP 和 Function Calling 是一回事吗
 
 不是同一层。Function Calling 是模型与应用之间表达结构化动作的机制；MCP 定义应用如何与能力提供方建立会话、发现能力和交换消息。Host 可把 MCP Tool 转换为模型的 Function Calling Schema，但中间仍需要策略和执行层。
 
@@ -28,7 +28,7 @@ MCP Host 是面向用户的应用或 Agent 运行时，管理模型、权限和�
 
 Host 应按 Server 隔离凭据和数据。不将一个 Server 的返回自动传给另一个 Server，不把凭据注入模型 Context，不让外部内容自行扩大工具白名单。
 
-## MCP 与 A2A 怎样区分
+## MCP 和 A2A 协议有什么区别
 
 MCP 主要是 Agent 应用与工具或上下文服务之间的接入契约。A2A 类协议面向具有自身身份、能力和任务生命周期的 Agent，常需要能力声明、任务创建、进度、产物、取消和失败语义。
 

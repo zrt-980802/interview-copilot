@@ -154,14 +154,18 @@ def open_input_stream(
     sample_rate: int = 0,
     channels: int = 0,
     blocksize: int = 1024,
+    on_gap: Callable[[], None] | None = None,
 ):
     """Open a raw stream for the current legacy AudioEngine."""
 
-    def callback(data, _frames, _time_info, _status) -> None:
+    def callback(data, _frames, _time_info, status) -> None:
+        if status and on_gap is not None:
+            on_gap()
         try:
             raw_queue.put_nowait(bytes(data))
         except queue.Full:
-            pass
+            if on_gap is not None:
+                on_gap()
 
     return _create_stream(
         device_index=device_index,
