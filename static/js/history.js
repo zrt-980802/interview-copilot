@@ -1,4 +1,5 @@
 import {draftDocument, isAnswerDocument, renderDocument} from '/static/js/answer-content.js';
+import {recordingReview} from '/static/js/recording-review.js';
 
 const $ = id => document.getElementById(id);
 let sessions = [], selected, query = '', offset = 0, listRequest = 0, detailRequest = 0;
@@ -64,6 +65,7 @@ function renderSession(value) {
   $('sessionMeta').textContent = `${value.started_at} · ${value.turns.length} 题 · ${value.end_at ? '已结束' : '未结束'}`;
   $('export').href = `/api/history/export/${value.id}`; $('export').download = `interview-${value.id}.md`;
   const fragment = document.createDocumentFragment();
+  fragment.append(recordingReview(value.id));
   for (const [index, turn] of value.turns.entries()) {
     const article = node('article', 'history-turn'); article.dataset.turnId = turn.id;
     article.append(node('div', 'turn-index', `问题 ${index + 1} · ${turn.ts}`), node('h3', '', turn.question));

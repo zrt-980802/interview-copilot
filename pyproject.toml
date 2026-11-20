@@ -23,6 +23,8 @@ audio = [
     "PyAudioWPatch>=0.2.12.7; platform_system == 'Windows'",
 ]
 pdf = ["pypdf>=5,<7"]
+speech = ["numpy>=1.26,<3", "onnxruntime>=1.20,<2", "soxr>=0.5,<2", "transformers>=4.44,<6"]
+offline-asr = ["faster-whisper>=1.1,<2"]
 semantic = ["sentence-transformers>=3,<6"]
 dev = ["pytest>=8,<10"]
 

@@ -109,13 +109,54 @@ def create_preview():
 
     @server.app.post("/__regression__/voice")
     async def voice(body: dict):
-        server._on_event(type="question",text=body["text"],speaker=body.get("speaker","interviewer"))
+        if body.get("source") in {"mic", "loopback"}:
+            engine = server.SELF_ENGINE if body["source"] == "mic" else server.ENGINE
+            engine.status_cb(type="question", text=body["text"], speaker=engine.speaker_tag,
+                             input_generation=engine.generation)
+        else:
+            server._on_event(type="question",text=body["text"],speaker=body.get("speaker","interviewer"))
         return {"ok":True}
+
+    @server.app.post("/__regression__/speech-draft")
+    async def speech_draft(body: dict):
+        engine = server.SELF_ENGINE if body.get('speaker') == 'self' else server.ENGINE
+        draft = {"draft_id":"synthetic-draft", "revision":1, "input_generation":engine.generation,
+                 "speaker":"interviewer", "state":"needs_review", "text":"如何避免重复消费？", **body}
+        engine.speech_snapshot = lambda: draft
+
+        def hold():
+            draft.update(state='needs_review',reason='editing')
+            return True
+        engine.hold_draft = hold
+        original_invalidate = getattr(engine, 'preview_original_invalidate', engine.invalidate_pending)
+        engine.preview_original_invalidate = original_invalidate
+
+        def invalidate():
+            original_invalidate()
+            draft.update(state='empty',text='',draft_id=None)
+        engine.invalidate_pending = invalidate
+        server._on_event(type='speech_draft', **draft)
+        return {'ok':True}
 
     @server.app.post("/__regression__/next-pairing-window")
     async def next_pairing_window():
         pairing_clock_offset[0] += 61
         return {"ok": True}
+
+    @server.app.post('/__regression__/recording')
+    async def synthetic_recording():
+        from interview_copilot.domain.speech import Recognition, SpeechSegment
+        class LocalClient:
+            def transcribe_result(self, audio, **kwargs):
+                return Recognition('合成录音：如何保证库存不能超卖？',
+                                   (SpeechSegment(0, .01, '合成录音：如何保证库存不能超卖？'),))
+            def close(self):
+                pass
+        archive = server._RUNTIME.recordings
+        archive.client_factory = lambda config: LocalClient()
+        for source, speaker in (('mic', 'self'), ('loopback', 'interviewer')):
+            archive.append(source, b'\0\0' * 160, 16000, 1, speaker)
+        return {'ok': True}
 
     # Keep the patch alive until the preview process exits.
     server.app.state.regression_patch = patch

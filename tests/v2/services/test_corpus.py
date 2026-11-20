@@ -209,3 +209,12 @@ def test_semantic_question_focuses_on_mechanism_while_document_name_limits_sourc
     assert [item["source"] for item in evidence] == ["notes:method.md"]
     index.search("MethodA")
     assert questions[-1] == "MethodA"
+
+
+def test_damaged_name_matching_wrong_title_does_not_remove_protocol_passage(index):
+    index.update_documents('test', [
+        {**document('wrong', '# Gephi-SK\n图形编辑与可视化布局。'), 'title': 'Gephi-SK'},
+        {**document('protocol', '# 工具调用规范\nFunction Call 使用 schema 定义参数，以 tool 角色返回调用结果。'), 'title': '工具调用规范'},
+    ])
+    evidence = index.search('Gephi-SK的高级封装，说明Function Call完整协议，schema怎么定义？')
+    assert any(item['source'] == 'notes:protocol.md' for item in evidence)

@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import threading
 
 import pytest
@@ -101,6 +102,54 @@ def test_project_cards_persist_review_and_drop_disabled_sources(library,tmp_path
     assert len(calls) == 2
 
 
+def test_delete_purges_facts_reviews_and_semantic_vectors(library, tmp_path):
+    store, index, workers = library
+    doc = add(store, workers, tmp_path, 'delete.md', 'Implemented entity linking.')
+    semantic = SemanticIndex(store.root / 'vectors.db', encoder=lambda texts: [[1, 0] for _ in texts], model='synthetic')
+    knowledge = KnowledgeStore(store, workers, lambda *args: {'facts': [raw()]}, semantic=semantic)
+    store.on_delete, store.on_change = knowledge.forget, knowledge.schedule
+    knowledge.schedule(); workers.drain()
+    fact_id = knowledge.detail(doc['id'])['facts'][0]['id']
+    knowledge.review(doc['id'], fact_id, 'confirm'); workers.drain()
+    assert semantic.search('entity linking') and knowledge.profile()
+    store.delete(doc['id'])
+    workers.drain()
+    assert not semantic.search('entity linking') and not index.search('entity linking')
+    assert knowledge.profile() == '' and knowledge.detail(doc['id'])['facts'] == []
+    for database, tables in [(knowledge.path, ['analyses', 'reviews']), (semantic.path, ['vectors'])]:
+        with sqlite3.connect(database) as conn:
+            for table in tables:
+                assert conn.execute('SELECT COUNT(*) FROM ' + table).fetchone()[0] == 0
+
+
+@pytest.mark.parametrize('phase', ['analysis', 'embedding'])
+def test_delete_during_background_processing_does_not_restore_results(library, tmp_path, phase):
+    store, index, workers = library
+    doc = add(store, workers, tmp_path, 'pending.md', 'Implemented entity linking.')
+    deleted = []
+    def remove_once():
+        if not deleted:
+            store.delete(doc['id'])
+            deleted.append(doc['id'])
+    def generate(*args):
+        if phase == 'analysis':
+            remove_once()
+        return {'facts': [raw()]}
+    def encode(texts):
+        remove_once()
+        return [[1, 0] for _ in texts]
+    semantic = SemanticIndex(store.root / 'vectors.db', encoder=encode, model='synthetic') if phase == 'embedding' else None
+    knowledge = KnowledgeStore(store, workers, generate, semantic=semantic)
+    store.on_delete, store.on_change = knowledge.forget, knowledge.schedule
+    knowledge.schedule(); workers.drain()
+    assert deleted and not store.list()
+    assert knowledge.summaries() == {} and not index.search('entity linking')
+    if semantic:
+        assert not semantic.search('entity linking')
+        with sqlite3.connect(semantic.path) as conn:
+            assert conn.execute('SELECT COUNT(*) FROM vectors').fetchone()[0] == 0
+
+
 def test_conflicting_graduation_dates_are_not_silently_resolved(library,tmp_path):
     store,index,workers = library
     document = add(store,workers,tmp_path,"resume.md",
@@ -183,6 +232,27 @@ def test_semantic_paraphrase_retrieval_caches_vectors_and_withdraws_sources(tmp_
     semantic.activate([])
     assert index.search("同一对象在不同系统中的不同名称") == []
     index.close()
+
+
+def test_old_vector_cache_migrates_without_reencoding_and_can_be_deleted(tmp_path):
+    path = tmp_path / 'vectors.db'
+    doc = {'id': 'legacy', 'source': 'uploads:legacy/notes.md', 'title': 'Legacy',
+           'kind': 'reference', 'text': 'Entity resolution reference with enough meaningful text.'}
+    semantic = SemanticIndex(path, encoder=lambda texts: [[1, 0] for _ in texts], model='synthetic')
+    semantic.sync([doc], cancelled=threading.Event())
+    with sqlite3.connect(path) as conn:
+        saved = conn.execute('SELECT id,model,vector FROM vectors').fetchall()
+        conn.execute('DROP TABLE vectors')
+        conn.execute('CREATE TABLE vectors(id TEXT PRIMARY KEY,model TEXT NOT NULL,vector TEXT NOT NULL)')
+        conn.executemany('INSERT INTO vectors VALUES(?,?,?)', saved)
+        conn.execute("INSERT INTO vectors VALUES('old-unowned-cache','synthetic','[1,0]')")
+    reopened = SemanticIndex(path, encoder=lambda texts: pytest.fail('cached vectors should be reused'), model='synthetic')
+    reopened.activate(['uploads:legacy'])
+    reopened.sync([doc], cancelled=threading.Event())
+    assert reopened.stats()['status'] == 'ready'
+    reopened.forget('uploads:legacy')
+    with sqlite3.connect(path) as conn:
+        assert conn.execute('SELECT COUNT(*) FROM vectors').fetchone()[0] == 0
 
 
 def test_embedding_failure_keeps_lexical_retrieval_available(tmp_path):

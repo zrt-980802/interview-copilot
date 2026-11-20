@@ -53,6 +53,7 @@ def display_event(event):
 
 def display_snapshot(snapshot, capture):
     value = deepcopy(snapshot)
+    value.pop("speech_drafts", None)
     value["capture"] = capture
     for turn in value["turns"]:
         for answer in turn["answers"]:

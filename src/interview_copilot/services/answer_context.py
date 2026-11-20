@@ -26,7 +26,8 @@ def answer_scope(question, evidence, profile="", dialogue=None):
                   len(query.intersection(terms(item.get("fact_check",{}).get("subject",item.get("heading",""))))) >= 2
                   for item in evidence)
     personal = bool(re.search(r"本人|简历|经历|自我介绍|毕业|在读|你(?:以前|曾经|是否|有没有|已经|独立|在|负责|参与|做过)|"
-                              r"[你我]的(?:项目|角色|工作|背景|职责)|你.*(?:做过|负责过|上线过|参与过)|"
+                              r"[你我]的(?:项目|角色|工作|背景|职责)|你(?:主导|带领|做的|开发的|实现的|所在)|"
+                              r"你.*(?:做过|负责过|上线过|参与过)|"
                               r"\b(?:my|your)\s+(?:project|experience|work|role|background|resume)\b|\b(?:have|did) you\b",question,re.I))
     personal = personal or style in {"experience", "introduction"}
     personal = personal or (style == "hr" and bool(re.search(r"薪资|薪酬|待遇|离职|婚姻|未婚|已婚|住在哪|住哪里|通勤", question)))
@@ -44,7 +45,7 @@ def answer_scope(question, evidence, profile="", dialogue=None):
         scope["boundary"] = "先说原文支持的做法范围，再用‘一种可行实现’解释机制。原文未明确的主键、阈值、校验和冲突裁决规则不能写成本人已实施。"
     if mode == "design":
         scope["boundary"] = "按题目约束自主提出方案、推导和取舍；缺少约束时明确合理假设，不要求资料中已有实现，不写成个人已完成的项目。"
-    if mode == "technical" and dialogue.get("project_followup") and re.search(r"如何|怎么|怎样|实现|处理|机制", question):
+    if mode == "technical" and dialogue.get("project_followup"):
         scope["mode"] = "project_method"
         scope["boundary"] = "这是对前述项目方法的追问；只将有证据的实现作为本人做法，未记载的机制以可行方案解释。"
     if mode == "experience" and "graduation_date" in profile and "材料冲突" in profile:

@@ -1,6 +1,26 @@
 import pytest
 
-from interview_copilot.services.question_flow import is_non_question, looks_unfinished, is_continuation
+from interview_copilot.services.question_flow import is_non_question, looks_unfinished, is_continuation, has_question_cue, is_background
+
+
+@pytest.mark.parametrize("text", ["请稍等一下，我看一下你的简历", "请打开摄像头", "你能听到我的声音吗？",
+                                  "能听见我说话吗？", "声音清楚吗？", "请等我一会儿"])
+def test_interview_operations_do_not_trigger_answers(legacy_server, text):
+    assert is_non_question(text)
+    legacy_server.MERGER.add_segment(text)
+    assert not legacy_server.MERGER.timer
+    assert not legacy_server.SESSIONS.turns(legacy_server._SESSION_ID)
+
+
+@pytest.mark.parametrize("text", ["说说三次握手", "列举常见的数据库死锁原因及排查顺序", "对比一下进程与线程的开销和隔离性", "你再展开一下"])
+def test_imperative_questions_have_intent(text):
+    assert has_question_cue(text) and not is_non_question(text)
+
+
+def test_scenario_introduction_is_context_but_combined_question_is_not():
+    assert is_background("我先介绍一个场景")
+    text = "请打开摄像头，然后说说三次握手"
+    assert not is_non_question(text) and has_question_cue(text)
 
 
 @pytest.mark.parametrize("text",["谢谢大家 谢谢大家","Thank you Thank you","喂喂喂喂","博士" * 30,"嗯"])

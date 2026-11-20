@@ -37,6 +37,90 @@ def upload(store, tmp_path, name="notes.md", text="PostgreSQL query plan referen
     return store.add(source, name, kind)["file"]
 
 
+def test_failed_document_delete_removes_original_and_allows_reupload(library, tmp_path):
+    store, index, workers = library
+    file = upload(store, tmp_path, text=' ')
+    workers.drain()
+    original = store.original(file['id'])[0]
+    assert store.get(file['id'])['status'] == 'error'
+    store.delete(file['id'])
+    assert not original.exists() and not store.list()
+    assert not store._text_path(file['id']).exists()
+    replacement = upload(store, tmp_path, text=' ')
+    assert replacement['id'] != file['id']
+    store.delete(replacement['id'])
+    workers.drain()
+    assert not store.list()
+
+
+@pytest.mark.parametrize('state', ['ready', 'disabled', 'archived', 'queued'])
+def test_delete_removes_any_document_and_retrieval_membership(library, tmp_path, state):
+    store, index, workers = library
+    file = upload(store, tmp_path)
+    if state != 'queued':
+        workers.drain()
+    if state == 'disabled':
+        store.update(file['id'], {'enabled': False})
+    elif state == 'archived':
+        store.update(file['id'], {'archived': True})
+    original = store.original(file['id'])[0]
+    store.delete(file['id'])
+    workers.drain()
+    assert not store.list() and not index.search('PostgreSQL')
+    assert not original.exists() and not store._text_path(file['id']).exists()
+    with pytest.raises(KeyError):
+        store.get(file['id'])
+
+
+def test_delete_during_extraction_cannot_recreate_text_or_index(library, tmp_path):
+    store, index, workers = library
+    file = upload(store, tmp_path)
+    def delete_during_parse(path):
+        text = extract_document(path)
+        store.delete(file['id'])
+        return text
+    store.extractor = delete_during_parse
+    workers.drain()
+    assert not store.list() and not index.search('PostgreSQL')
+    assert not store._text_path(file['id']).exists()
+
+
+def test_delete_rollback_restores_original_text_and_catalog(library, tmp_path, monkeypatch):
+    store, index, workers = library
+    file = upload(store, tmp_path)
+    workers.drain()
+    original = store.original(file['id'])[0]
+    def fail(conn):
+        raise OSError('synthetic index failure')
+    monkeypatch.setattr(store, '_sync_index', fail)
+    with pytest.raises(OSError):
+        store.delete(file['id'])
+    assert original.exists() and store._text_path(file['id']).exists()
+    assert store.get(file['id'])['status'] == 'ready' and index.search('PostgreSQL')
+
+
+def test_deleting_current_resume_does_not_reactivate_an_old_resume(library, tmp_path):
+    store, index, workers = library
+    old = upload(store, tmp_path, kind='resume')
+    workers.drain()
+    current = upload(store, tmp_path, text='Current resume describes Java API integration.', kind='resume')
+    workers.drain()
+    store.delete(current['id'])
+    assert store.resume() == ('', None)
+    assert not store.get(old['id'])['enabled']
+
+
+def test_delete_keeps_other_documents_and_their_retrieval(library, tmp_path):
+    store, index, workers = library
+    removed = upload(store, tmp_path)
+    kept = upload(store, tmp_path, name='kept.md', text='Redis cache expiration technical reference remains available.')
+    workers.drain()
+    store.delete(removed['id'])
+    assert [item['id'] for item in store.list()] == [kept['id']]
+    assert not index.search('PostgreSQL') and index.search('Redis')
+    assert store.original(kept['id'])[0].exists()
+
+
 def test_resume_replacement_preserves_originals_and_identical_files_do_not_duplicate(library, tmp_path):
     store, index, workers = library
     first = upload(store,tmp_path,"resume.md","Candidate worked on Python order APIs and request validation.","resume")

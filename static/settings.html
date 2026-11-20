@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/static/app-shell.css">
   <script src="/static/vendor/lucide.js" defer></script>
   <script src="/static/js/settings.js" type="module"></script>
+  <script src="/static/js/recording-settings.js" type="module"></script>
 </head>
 <body class="settings-page">
   <header class="app-header">
@@ -62,6 +63,18 @@
             </div>
             <div id="fallbackResult" class="probe-result" role="status" aria-live="polite"></div>
           </div>
+        </section>
+        <section id="recordingSettings" aria-labelledby="recordingSettingsTitle">
+          <div class="section-heading"><h2 id="recordingSettingsTitle">会话录音与精转写</h2><span id="recordingConfigState" class="key-state" role="status"></span></div>
+          <div class="service-actions">
+            <label class="check"><input id="recordingEnabled" type="checkbox">保存会话录音</label>
+            <label class="check"><input id="recordingAuto" type="checkbox">结束后自动转写</label>
+          </div>
+          <div class="fields">
+            <label>本地语音模型<select id="recordingModel"><option value="large-v3">Whisper large-v3</option><option value="large-v3-turbo">Whisper large-v3-turbo</option><option value="medium">Whisper medium</option></select></label>
+            <label>计算设备<select id="recordingDevice"><option value="auto">优先 GPU，加载失败时使用 CPU</option><option value="cuda">GPU / CUDA</option><option value="cpu">CPU</option></select></label>
+          </div>
+          <div class="service-actions"><button type="button" id="recordingSave" class="command"><i data-lucide="save"></i>保存录音设置</button></div>
         </section>
         </div>
         <div class="save-bar"><label class="check"><input id="remember" type="checkbox" checked>新密钥在本机加密保存</label>

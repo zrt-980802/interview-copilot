@@ -52,6 +52,8 @@ from interview_copilot.services.question_flow import is_non_question, looks_unfi
 from interview_copilot.services.dialogue import evidence_queries
 from interview_copilot.services.remote_documents import download_github
 from interview_copilot.services.provider_settings import ProviderSettings, ProviderSettingsError, probe_provider
+from interview_copilot.services.recording_settings import RecordingSettings
+from interview_copilot.services.recordings import SessionRecordings
 from interview_copilot.legacy.mobile import create_mobile_app
 
 from copilot.audio import AudioEngine, list_output_devices, list_input_devices  # noqa: E402
@@ -568,6 +570,13 @@ def _start_question(question: str, manual: bool):
 def spawn_answer(question: str):
     with _INTERVIEW_LOCK:
         MERGER.clear()
+        engine = question_engine()
+        engine.invalidate_pending()
+        if hasattr(engine, "speech_snapshot"):
+            broadcast({"type": "speech_draft", "state": "empty", "text": "", "speaker": "interviewer",
+                       "session_id": _SESSION_ID.value})
+        if _RUNTIME:
+            _RUNTIME.speech_previous = None
         return _start_question(question, manual=True)
 
 
@@ -581,14 +590,26 @@ def _on_event(**ev):
         if _RUNTIME is None or not _RUNTIME.ready:
             return
         ev.setdefault("speaker", "interviewer")
-        engine = globals().get("SELF_ENGINE" if ev["speaker"] == "self" else "ENGINE")
+        source = ev.get("source", "mic" if ev["speaker"] == "self" else "loopback")
+        engine = SELF_ENGINE if source == "mic" else ENGINE
         if "input_generation" in ev and engine and ev["input_generation"] != engine.generation:
             return
+        if _RUNTIME.audio_test_mode and source == "loopback" and ev.get("type") in {"question", "speech_draft", "speech_commit"}:
+            return
+        ev["source"], ev["speaker"] = source, input_speaker(source)
         ev["session_id"] = _SESSION_ID.value
+        _RUNTIME.recordings.event(ev)
+        if ev.get("type") == "speech_commit":
+            if getattr(engine, "accept_commit", lambda event: False)(ev):
+                _commit_speech(ev)
+            return
         broadcast(ev)
+        if ev.get("type") == "speech_draft":
+            return
         try:
             history_store.log_event(ev.get("type", "?"), {
                 "text": ev.get("text", ""), "speaker": ev.get("speaker"),
+                "source": source,
                 **{key:ev[key] for key in ("duration_ms","level_db","reason") if key in ev}}, session_id=_DB_SESSION_ID)
         except HistoryError:
             broadcast({"type": "status", "level": "error", "message": "历史记录写入失败，请检查服务状态"})
@@ -599,8 +620,41 @@ def _on_event(**ev):
                 SESSIONS.note_candidate_speech(_SESSION_ID, ev.get("text", ""))
                 if not is_non_question(ev.get("text","")):
                     MERGER.end_continuation()
+                    _RUNTIME.speech_previous = None
                 return
             MERGER.add_segment(ev.get("text", ""))
+
+
+def _commit_speech(event):
+    """Called under the interview lock after the audio owner accepts its token."""
+    text, decision = event["text"], event["decision"]
+    history_store.log_event("speech_decision", {key: event.get(key) for key in
+                           ("draft_id", "revision", "speaker", "decision", "text")}, session_id=_DB_SESSION_ID)
+    _RUNTIME.recordings.event({**event, "type": "speech_decision"})
+    if decision == "reject":
+        return
+    if event["speaker"] == "self":
+        CONV.add(text)
+        SELF_TURN.note(text)
+        SESSIONS.note_candidate_speech(_SESSION_ID, text)
+        _RUNTIME.speech_previous = None
+        broadcast({"type": "question", "text": text, "speaker": "self", "session_id": _SESSION_ID.value,
+                   "at": time.strftime("%H:%M:%S")})
+        return
+    if decision == "context_only":
+        SESSIONS.note_background(_SESSION_ID, text)
+        return
+    previous = _RUNTIME.speech_previous
+    if decision == "supplement" and (not previous or previous.get("draft_id") != event.get("continuation_of")):
+        SESSIONS.note_background(_SESSION_ID, text)
+        return
+    if previous and (decision == 'supplement' or time.monotonic() - previous["at"] <= CONTINUATION_MS / 1000) and is_continuation(previous["text"], text):
+        text = previous["text"] + " " + text
+        context = _revise_merged(text, previous["turn_id"])
+    else:
+        context = _start_question(text, manual=False)
+    _RUNTIME.speech_previous = {"text": text, "turn_id": context.turn_id, "at": time.monotonic(),
+                                "draft_id": event.get("draft_id")}
 
 
 def _emit_merged(qtext: str):
@@ -634,7 +688,12 @@ def _revise_merged(qtext,turn_id):
 
 
 def create_engine(mode: str, audio_source=None, stt_client=None, *, factory=None, status_cb=None):
-    return (factory or AudioEngine)(
+    callback = status_cb or _on_event
+
+    def source_event(**event):
+        callback(**{**event, "source": mode})
+
+    engine = (factory or AudioEngine)(
         stt_base_url=CFG["stt"]["url"],
         stt_model=CFG["stt"]["model"],
         stt_api_key=CFG["stt"].get("api_key", ""),
@@ -642,9 +701,36 @@ def create_engine(mode: str, audio_source=None, stt_client=None, *, factory=None
         audio_source=audio_source,
         stt_client=stt_client,
         audio_config=CFG.get("audio", {}),
-        status_cb=status_cb or _on_event,
+        status_cb=source_event,
         mode=mode,
     )
+    if mode == "mic" and _RUNTIME and _RUNTIME.audio_test_mode:
+        engine.set_speaker_role("interviewer")
+    if _RUNTIME and _RUNTIME.recordings:
+        engine.recording_sink = _RUNTIME.recordings.append
+    return engine
+
+
+def question_engine():
+    return SELF_ENGINE if _RUNTIME and _RUNTIME.audio_test_mode else ENGINE
+
+
+def input_speaker(source):
+    return "self" if source == "mic" and not (_RUNTIME and _RUNTIME.audio_test_mode) else "interviewer"
+
+
+def speech_components(mode):
+    if mode == "legacy":
+        return AudioEngine, None, None
+    from interview_copilot.audio.speech_models import SpeechModels
+    from interview_copilot.services.speech_workers import SpeechScheduler
+    from interview_copilot.legacy.speech_engine import ContinuousAudioEngine
+    options = CFG.get("speech", {})
+    models = SpeechModels(options.get("models_dir", os.path.join(BASE_DIR, "data", "speech-models")))
+    scheduler = SpeechScheduler()
+    factory = lambda **kwargs: ContinuousAudioEngine(speech_models=models, speech_scheduler=scheduler,
+                                                    speech_options=options, **kwargs)
+    return factory, models, scheduler
 
 
 MERGER.emit = _emit_merged               # 接上真正的出题出口
@@ -665,7 +751,7 @@ def _refresh_hotwords():
 def start_runtime(config=None, *, history_factory=HistoryStore, llm_factory=None,
                   engine_factory=None, worker_factory=WorkerGroup, background=True,
                   corpus_factory=CorpusIndex, library_factory=DocumentLibrary,
-                  provider_factory=ProviderSettings):
+                  provider_factory=ProviderSettings, recordings_dir=None):
     global CFG, MERGE_WAIT_MS, CONTINUATION_MS, LLM, ENGINE, SELF_ENGINE
     global history_store, _SESSION_ID, _DB_SESSION_ID, SESSIONS, EVENTS, _RUNTIME
     with _LIFECYCLE_LOCK:
@@ -681,7 +767,11 @@ def start_runtime(config=None, *, history_factory=HistoryStore, llm_factory=None
                              history=None, session_id=None, history_ended=False,
                              errors=[], audio_closed=False, tasks_ended=False, corpus=None, library=None,
                              providers=None, knowledge=None, retired_llms=[], llm_factory=llm_factory or LLMClient,
-                             capture_devices={"loopback":None,"mic":None})
+                             capture_devices={"loopback":None,"mic":None},
+                             speech_scheduler=None, speech_models=None, speech_previous=None,
+                             audio_test_mode=False,
+                             recordings=None, recording_settings=None,
+                             speech_mode=CFG.get("speech", {}).get("mode", "legacy"))
         _RUNTIME = rt
         app.state.runtime = rt
         SESSIONS = SessionManager()
@@ -694,6 +784,10 @@ def start_runtime(config=None, *, history_factory=HistoryStore, llm_factory=None
         MOBILE_ACCESS.revoke_all()
         _SESSION_ID = _DB_SESSION_ID = None
         try:
+            if rt.speech_mode not in {"legacy", "active"}:
+                raise ValueError("speech.mode must be legacy or active; shadow evaluation uses scripts/evaluate_speech.py")
+            if rt.speech_mode == "active" and engine_factory is None:
+                engine_factory, rt.speech_models, rt.speech_scheduler = speech_components(rt.speech_mode)
             rt.corpus = corpus_factory()
             rt.library = library_factory(os.path.join(BASE_DIR, "data", "documents"), rt.corpus, rt.workers)
             rt.library.start()
@@ -713,11 +807,19 @@ def start_runtime(config=None, *, history_factory=HistoryStore, llm_factory=None
             CFG["llm"] = llm_config
             rt.llm = _provider_client(rt, llm_config, credentials)
             LLM = rt.llm
+            recording_root = recordings_dir or os.path.join(BASE_DIR, 'data', 'recordings')
+            local_stt = CFG.get('stt', {}).get('server_dir')
+            local_python = (os.path.join(local_stt, 'venv', 'Scripts', 'python.exe') if local_stt else sys.executable)
+            rt.recording_settings = RecordingSettings(recording_root, local_python, CFG.get('recording'))
+            rt.recordings = SessionRecordings(recording_root, rt.recording_settings)
+            rt.recordings.start()
+            rt.recordings.begin(_SESSION_ID.value)
 
             def audio_event(**ev):
                 with _INTERVIEW_LOCK:
                     if _RUNTIME is rt and rt.ready:
                         _on_event(**ev)
+            rt.audio_event = audio_event
 
             for mode in ("loopback", "mic"):
                 eng = create_engine(mode, factory=engine_factory, status_cb=audio_event)
@@ -729,6 +831,7 @@ def start_runtime(config=None, *, history_factory=HistoryStore, llm_factory=None
                             model=options.get("semantic_model","BAAI/bge-m3")) if options.get("semantic_enabled",True) else None)
                 rt.corpus.semantic = semantic
                 rt.knowledge = KnowledgeStore(rt.library,rt.workers,lambda system,data: rt.llm.generate_json(system,data),semantic=semantic)
+                rt.library.on_delete = rt.knowledge.forget
 
             def documents_changed():
                 if _RUNTIME is rt and rt.ready:
@@ -800,6 +903,10 @@ def stop_runtime(timeout=10.0):
         attempt("question timers", lambda: MERGER.close(timeout=timeout))
         for eng in rt.engines:
             attempt("audio engine", lambda eng=eng: eng.close(timeout=timeout))
+        if rt.recordings:
+            attempt("session recordings", lambda: rt.recordings.close(timeout=timeout))
+        if rt.speech_scheduler:
+            attempt("speech scheduler", rt.speech_scheduler.close)
         for client in {id(client):client for client in [rt.llm, *rt.retired_llms] if client is not None}.values():
             attempt("model client", client.close)
         attempt("background workers", lambda: rt.workers.join(timeout=timeout))
@@ -828,7 +935,7 @@ def stop_runtime(timeout=10.0):
 
 @app.middleware("http")
 async def require_runtime(request, call_next):
-    if request.url.path in ("/files", "/settings") or request.url.path.startswith(("/api/files", "/api/providers", "/api/audio")):
+    if request.url.path in ("/files", "/settings", "/api/session/end") or request.url.path.startswith(("/api/files", "/api/providers", "/api/audio", "/api/speech", "/api/recordings")):
         denied = desktop_mobile_guard(request)
         if denied is not None:
             denied.headers["Cache-Control"] = "no-store"
@@ -837,7 +944,7 @@ async def require_runtime(request, call_next):
         if _RUNTIME is None or not _RUNTIME.ready:
             return JSONResponse({"ok": False, "error": "service is not ready"}, status_code=503)
     response = await call_next(request)
-    if request.url.path.startswith(("/api/mobile", "/api/history", "/api/files", "/api/providers", "/api/audio")):
+    if request.url.path.startswith(("/api/mobile", "/api/history", "/api/files", "/api/providers", "/api/audio", "/api/speech", "/api/recordings", "/api/session")):
         response.headers["Cache-Control"] = "no-store"
         response.headers["Referrer-Policy"] = "no-referrer"
     return response
@@ -875,6 +982,8 @@ async def state():
         "history_len": len(SESSIONS.turns(_SESSION_ID)),
         "session_id": _SESSION_ID.value,
         "preview": bool(getattr(app.state, "synthetic_preview", False)),
+        "speech": {"mode": _RUNTIME.speech_mode, "drafts": speech_drafts()},
+        "audio_test_mode": _RUNTIME.audio_test_mode,
         "self_recent": CONV.recent(max_chars=160),
         "papers": knowledge.load_status(),
         "materials": mat_store.load_status(),
@@ -930,6 +1039,79 @@ async def refresh_audio_devices():
     return await asyncio.to_thread(refresh)
 
 
+@app.post("/api/speech/mode")
+async def speech_mode(payload: dict):
+    mode = payload.get("mode")
+    if mode not in {"legacy", "active"}:
+        return JSONResponse({"ok": False, "error": "未知语音流程"}, status_code=400)
+
+    def change():
+        global ENGINE, SELF_ENGINE
+        with _LIFECYCLE_LOCK, _CAPTURE_LOCKS["loopback"], _CAPTURE_LOCKS["mic"]:
+            rt = _RUNTIME
+            if not rt or not rt.ready:
+                return JSONResponse({"ok": False, "error": "服务暂不可用"}, status_code=503)
+            if any(engine.is_running() for engine in rt.engines):
+                return JSONResponse({"ok": False, "error": "请先暂停两路采集"}, status_code=409)
+            if rt.speech_mode == mode:
+                return {"ok": True, "mode": mode}
+            new_engines, scheduler = [], None
+            try:
+                factory, models, scheduler = speech_components(mode)
+                for source in ("loopback", "mic"):
+                    new_engines.append(create_engine(source, factory=factory, status_cb=rt.audio_event))
+                for engine in rt.engines:
+                    engine.close()
+                if rt.speech_scheduler:
+                    rt.speech_scheduler.close()
+            except Exception:
+                for engine in new_engines:
+                    engine.close()
+                if scheduler:
+                    scheduler.close()
+                return JSONResponse({"ok": False, "error": "切换失败，请检查本地语音模型和依赖"}, status_code=503)
+            with _INTERVIEW_LOCK:
+                rt.engines = new_engines
+                ENGINE, SELF_ENGINE = new_engines
+                rt.speech_models, rt.speech_scheduler, rt.speech_mode = models, scheduler, mode
+                rt.speech_previous = None
+                MERGER.clear()
+                _refresh_hotwords()
+                for speaker in ("interviewer", "self"):
+                    broadcast({"type": "speech_draft", "state": "empty", "text": "", "speaker": speaker,
+                               "session_id": _SESSION_ID.value})
+            return {"ok": True, "mode": mode}
+    return await asyncio.to_thread(change)
+
+
+@app.post("/api/audio/test-mode")
+async def audio_test_mode(payload: dict):
+    enabled = payload.get("enabled")
+    if type(enabled) is not bool:
+        return JSONResponse({"ok": False, "error": "测试模式须为开或关"}, status_code=400)
+
+    def change():
+        with _LIFECYCLE_LOCK, _CAPTURE_LOCKS["loopback"], _CAPTURE_LOCKS["mic"]:
+            rt = _RUNTIME
+            if not rt or not rt.ready:
+                return JSONResponse({"ok": False, "error": "服务暂不可用"}, status_code=503)
+            if rt.audio_test_mode == enabled:
+                return {"ok": True, "enabled": enabled}
+            if any(engine.is_running() for engine in rt.engines):
+                return JSONResponse({"ok": False, "error": "请先暂停采集，再切换测试模式"}, status_code=409)
+            with _INTERVIEW_LOCK:
+                ENGINE.invalidate_pending()
+                SELF_ENGINE.set_speaker_role("interviewer" if enabled else "self")
+                rt.audio_test_mode, rt.speech_previous = enabled, None
+                MERGER.clear()
+                for speaker in ("interviewer", "self"):
+                    broadcast({"type": "speech_draft", "state": "empty", "text": "", "speaker": speaker,
+                               "session_id": _SESSION_ID.value})
+                broadcast({"type": "capture_state", "capture": capture_state()})
+                return {"ok": True, "enabled": enabled}
+    return await asyncio.to_thread(change)
+
+
 @app.post("/api/start")
 async def start(payload: dict | None = None):
     """启动监听。body 可为 null(旧UI兼容)/{}/{"source":"loopback|mic","device_index":N}"""
@@ -946,6 +1128,8 @@ async def start(payload: dict | None = None):
         with _CAPTURE_LOCKS[src]:
             if _RUNTIME is not rt or not rt.ready:
                 return {"ok":False,"error":"服务已停止"}
+            if rt.audio_test_mode and src == "loopback":
+                return JSONResponse({"ok": False, "error": "麦克风提问测试仅采集麦克风"}, status_code=409)
             try:
                 if engine.is_running() and "device_index" in payload and rt.capture_devices[src] != dev_idx:
                     stopped = engine.stop()
@@ -1029,9 +1213,12 @@ async def stop(payload: dict | None = None):
         with _CAPTURE_LOCKS[src]:
             engine = SELF_ENGINE if src == "mic" else ENGINE
             with _INTERVIEW_LOCK:
-                if src == "loopback":
+                if engine is question_engine():
                     MERGER.clear()
+                    _RUNTIME.speech_previous = None
                 engine.invalidate_pending()
+                broadcast({"type": "speech_draft", "state": "empty", "text": "",
+                           "speaker": input_speaker(src), "session_id": _SESSION_ID.value})
             r = engine.stop()
             with _INTERVIEW_LOCK:
                 STATE["self_listening" if src == "mic" else "listening"] = False
@@ -1043,7 +1230,7 @@ async def stop(payload: dict | None = None):
 
 @app.post("/api/recalibrate")
 async def recalibrate():
-    return ENGINE.recalibrate()
+    return question_engine().recalibrate()
 
 
 @app.post("/api/ask")
@@ -1054,6 +1241,45 @@ async def ask(payload: dict):
     q = text.strip()
     context = await asyncio.to_thread(spawn_answer, q)
     return {"ok": True, "session_id": context.session_id.value, "turn_id": context.turn_id.value}
+
+
+def speech_drafts():
+    return [{**getattr(engine, "speech_snapshot", lambda: {"state": "empty", "text": ""})(),
+             "speaker": input_speaker(source), "source": source}
+            for engine, source in ((ENGINE, "loopback"), (SELF_ENGINE, "mic"))
+            if source != "loopback" or not _RUNTIME.audio_test_mode]
+
+
+@app.post("/api/speech/draft")
+async def edit_speech_draft(payload: dict):
+    with _INTERVIEW_LOCK:
+        if payload.get("session_id") != _SESSION_ID.value:
+            return JSONResponse({"ok": False, "error": "会话已切换"}, status_code=409)
+        engine = (SELF_ENGINE if payload.get("source") == "mic" or payload.get("speaker") == "self"
+                  else question_engine())
+        current = getattr(engine, "speech_snapshot", lambda: {})()
+        if not current.get("draft_id") or any(payload.get(key) != current.get(key)
+                    for key in ("draft_id", "revision", "input_generation")) or current.get("state") == "committed":
+            return JSONResponse({"ok": False, "error": "草稿已更新，请核对后重试"}, status_code=409)
+        action, text = payload.get("action"), payload.get("text", "")
+        if action == "hold":
+            if getattr(engine, "hold_draft", lambda: False)():
+                return {"ok": True, "draft": engine.speech_snapshot()}
+            return JSONResponse({"ok": False, "error": "草稿已提交，请核对当前问题"}, status_code=409)
+        if action not in {"submit", "discard"} or (action == "submit" and
+                (not isinstance(text, str) or not 0 < len(text.strip()) <= 12000)):
+            return JSONResponse({"ok": False, "error": "草稿操作或文字不正确"}, status_code=400)
+        engine.invalidate_pending()
+        broadcast({"type": "speech_draft", "state": "empty", "text": "", "speaker": payload.get("speaker"),
+                   "session_id": _SESSION_ID.value})
+        if action == "submit":
+            if engine is SELF_ENGINE and not _RUNTIME.audio_test_mode:
+                _commit_speech({"text": text.strip(), "decision": "context_only", "speaker": "self"})
+            else:
+                _RUNTIME.speech_previous = None
+                MERGER.clear()
+                _start_question(text.strip(), manual=True)
+        return {"ok": True}
 
 
 @app.post("/api/detail")
@@ -1074,25 +1300,105 @@ async def detail(payload: dict):
 
 @app.post("/api/clear")
 async def clear():
-    def reset():
-        global _SESSION_ID, _DB_SESSION_ID
-        with _INTERVIEW_LOCK:
-            MERGER.clear()
-            ENGINE.invalidate_pending()
-            SELF_ENGINE.invalidate_pending()
-            SESSIONS.end_session(_SESSION_ID)
-            previous_session = _SESSION_ID.value
-            CONV.clear()
-            SELF_TURN.clear()
-            history_store.session_end(session_id=_DB_SESSION_ID)
-            _DB_SESSION_ID = history_store.new_session()
-            _RUNTIME.session_id = _DB_SESSION_ID
-            _SESSION_ID = SessionId(str(_DB_SESSION_ID) if _DB_SESSION_ID is not None else uuid4().hex)
-            SESSIONS.create_session(_SESSION_ID)
-            MOBILE_ACCESS.follow_session(previous_session, _SESSION_ID.value)
-            broadcast({"type": "session_reset", "session_id": _SESSION_ID.value})
-            return {"ok": True, "session_id": _SESSION_ID.value}
-    return await asyncio.to_thread(reset)
+    return await asyncio.to_thread(_reset_session)
+
+
+def _reset_session():
+    global _SESSION_ID, _DB_SESSION_ID
+    with _INTERVIEW_LOCK:
+        MERGER.clear()
+        ENGINE.invalidate_pending()
+        SELF_ENGINE.invalidate_pending()
+        _RUNTIME.speech_previous = None
+        previous_session = _SESSION_ID.value
+        _RUNTIME.recordings.finish(previous_session)
+        SESSIONS.end_session(_SESSION_ID)
+        CONV.clear()
+        SELF_TURN.clear()
+        history_store.session_end(session_id=_DB_SESSION_ID)
+        _DB_SESSION_ID = history_store.new_session()
+        _RUNTIME.session_id = _DB_SESSION_ID
+        _SESSION_ID = SessionId(str(_DB_SESSION_ID) if _DB_SESSION_ID is not None else uuid4().hex)
+        SESSIONS.create_session(_SESSION_ID)
+        _RUNTIME.recordings.begin(_SESSION_ID.value)
+        MOBILE_ACCESS.follow_session(previous_session, _SESSION_ID.value)
+        broadcast({"type": "session_reset", "session_id": _SESSION_ID.value})
+        return {"ok": True, "session_id": _SESSION_ID.value, "archived_session_id": previous_session}
+
+
+@app.post('/api/session/end')
+async def end_interview():
+    def finish():
+        with _CAPTURE_LOCKS['loopback'], _CAPTURE_LOCKS['mic']:
+            for engine in (ENGINE, SELF_ENGINE):
+                result = engine.stop()
+                if not result.get('ok'):
+                    return JSONResponse({'ok': False, 'error': '采集尚未停止，请重试结束面试'}, status_code=409)
+            STATE.update(listening=False, self_listening=False)
+            result = _reset_session()
+            broadcast({'type': 'capture_state', 'capture': capture_state()})
+            return result
+    return await asyncio.to_thread(finish)
+
+
+@app.get('/api/recordings/settings')
+async def recording_settings():
+    return _RUNTIME.recording_settings.public()
+
+
+@app.post('/api/recordings/settings')
+async def save_recording_settings(payload: dict):
+    def save():
+        value = _RUNTIME.recording_settings.save(payload)
+        _RUNTIME.recordings.set_enabled(value['enabled'])
+        return {'ok': True, **value}
+    try:
+        return await asyncio.to_thread(save)
+    except (ValueError, ProviderSettingsError) as exc:
+        return JSONResponse({'ok': False, 'error': str(exc)}, status_code=400)
+
+
+@app.get('/api/recordings/current')
+async def current_recording():
+    return {'ok': True, **_RUNTIME.recordings.snapshot(_SESSION_ID.value),
+            'enabled': _RUNTIME.recording_settings.public()['enabled'],
+            'capturing': [source for source, key in (('mic', 'self_listening'), ('loopback', 'listening')) if STATE[key]]}
+
+
+@app.get('/api/recordings/{sid}')
+async def recording(sid: int):
+    return await asyncio.to_thread(_RUNTIME.recordings.snapshot, sid)
+
+
+@app.get('/api/recordings/{sid}/audio/{filename}')
+async def recording_audio(sid: int, filename: str):
+    try:
+        path = _RUNTIME.recordings.audio_path(sid, filename)
+        return FileResponse(path, media_type='audio/wav', filename=filename)
+    except (ValueError, FileNotFoundError):
+        return JSONResponse({'ok': False, 'error': '录音片段不存在'}, status_code=404)
+
+
+@app.post('/api/recordings/{sid}/transcribe')
+async def transcribe_recording(sid: int):
+    try:
+        return await asyncio.to_thread(_RUNTIME.recordings.transcribe, sid)
+    except ValueError as exc:
+        return JSONResponse({'ok': False, 'error': str(exc)}, status_code=409)
+
+
+@app.post('/api/recordings/{sid}/review')
+async def review_transcript(sid: int, payload: dict):
+    try:
+        return await asyncio.to_thread(_RUNTIME.recordings.review, sid, payload.get('file'), payload.get('text'))
+    except ValueError as exc:
+        return JSONResponse({'ok': False, 'error': str(exc)}, status_code=409)
+
+
+@app.get('/api/recordings/{sid}/export')
+async def export_recording(sid: int):
+    value = await asyncio.to_thread(_RUNTIME.recordings.export, sid)
+    return JSONResponse(value, headers={'Content-Disposition': f'attachment; filename="session-{sid}-transcript.json"'})
 
 
 @app.post("/api/cancel")
@@ -1283,6 +1589,15 @@ async def files_retry(identity: str):
         return _file_error(exc)
 
 
+@app.delete('/api/files/{identity}')
+async def files_delete(identity: str):
+    try:
+        await asyncio.to_thread(_RUNTIME.library.delete, identity)
+        return {'ok': True}
+    except (KeyError, DocumentError, OSError, sqlite3.Error) as exc:
+        return _file_error(exc)
+
+
 @app.get("/api/files/{identity}/source")
 async def files_source(identity: str, start: int = 1, end: int = 80):
     try:
@@ -1435,7 +1750,8 @@ def session_snapshot(reason="requested"):
                                        "document": answer.document}
                                       for answer in turn.answers]})
         return {"type": "session_snapshot", "event_id": EVENTS.cursor,
-                "session_id": _SESSION_ID.value, "reason": reason, "turns": turns}
+                "session_id": _SESSION_ID.value, "reason": reason, "turns": turns,
+                "speech_drafts": speech_drafts()}
 
 
 @app.get("/api/session/snapshot")

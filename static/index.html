@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>工作笔记</title>
+<link rel="stylesheet" href="/static/speech-drafts.css">
 <style>
   :root{
     --bg:#111112; --panel:#19191b; --panel2:#232325; --line:#36363a;
@@ -216,7 +217,7 @@
   <div class="capture-heading"><h2>声音采集</h2><span class="capture-status" role="status"><span id="stateDot"></span><span id="captureStatus">未开启</span></span><button id="btnRefreshDevices" class="command subtle"><i data-lucide="refresh-cw"></i>刷新设备</button></div>
   <div class="capture-controls">
     <label class="device-control"><span><i data-lucide="headphones"></i>面试官 · 播放设备</span><select id="deviceSel" aria-label="面试官播放设备" title="会议软件播放声音的耳机、扬声器或声卡"><option value="">系统默认输出</option></select><small id="outputDeviceState">尚未采集</small></label>
-    <label class="device-control"><span><i data-lucide="mic"></i>我 · 麦克风输入</span><select id="micSel" aria-label="本人麦克风" title="本人麦克风"><option value="default">系统默认输入</option><option value="">关闭本人麦克风</option></select><small id="inputDeviceState">尚未采集</small></label>
+    <label class="device-control"><span><i data-lucide="mic"></i><span id="micRoleLabel">我 · 麦克风输入</span></span><select id="micSel" aria-label="本人麦克风" title="本人麦克风"><option value="default">系统默认输入</option><option value="">关闭本人麦克风</option></select><small id="inputDeviceState">尚未采集</small></label>
     <div class="capture-commands">
       <button id="btnStart" class="command primary"><i data-lucide="play"></i>开始监听</button>
       <button id="btnStop" class="command" disabled title="停止采集" aria-label="停止采集"><i data-lucide="pause"></i>暂停采集</button>
@@ -224,6 +225,10 @@
     </div>
   </div>
   <div id="captureNotice" role="status" hidden></div>
+  <div class="capture-options">
+    <label class="speech-mode-control">语音流程 <select id="speechMode" aria-label="语音流程" title="暂停两路采集后切换，仅当前运行期间生效"><option value="legacy">兼容流程</option><option value="active">连续语音 · 试用</option></select></label>
+    <label class="audio-test-control" title="暂停采集后切换"><input id="audioTestMode" type="checkbox">麦克风提问测试</label>
+  </div>
   <div id="levelWrap" class="capture-levels">
     <span class="level-reading"><span>系统声音</span><span id="levelBarOuter"><span id="levelBar"></span></span><span id="dbLabel">-- dB</span></span>
     <span class="level-reading"><span id="micDot">本人麦克风</span><span id="micBarOuter"><span id="micBar"></span></span><span id="micDbLabel">-- dB</span></span>
@@ -231,12 +236,16 @@
   </div>
 </section>
 
+<section id="speechDrafts" class="speech-drafts" aria-label="语音草稿" hidden></section>
+
 <div class="session-toolbar">
   <div class="session-title"><h1>实时面试</h1><span id="resumeBadge">简历检测中…</span></div>
   <div class="session-commands">
+    <span id="recordingState" class="pill" role="status"></span>
     <button id="btnResume" class="command subtle"><i data-lucide="file-user"></i>管理简历</button>
     <button id="btnPhone" class="command"><i data-lucide="smartphone"></i>手机显示</button>
     <button id="btnClear" class="command"><i data-lucide="list-plus"></i>新会话</button>
+    <button id="btnEnd" class="command"><i data-lucide="square"></i>结束面试</button>
   </div>
 </div>
 
@@ -287,6 +296,8 @@
   </div>
 </div>
 
+<script src="/static/js/speech-drafts.js"></script>
+<script src="/static/js/session-recording.js" type="module"></script>
 <script>
 const answerContentReady=window.AnswerContent?Promise.resolve(window.AnswerContent)
   :import('/static/js/answer-content.js').then(module=>window.AnswerContent=module).catch(()=>null);
@@ -298,6 +309,7 @@ let followReading=true;
 const qaByTurn=new Map(),taskTargets=new Map();
 
 function resetSession(sessionId,announce=true){
+  window.SpeechDrafts?.reset();
   currentSession=sessionId;latestGeneration=0;lastQuestion='';curQA=null;
   qaByTurn.clear();taskTargets.clear();
   $('questionList').replaceChildren();$('questionCount').textContent='0 题';
@@ -341,7 +353,7 @@ function fmtMicLevel(db,speaking,active){
   $('micDot').className='pill'+(active?' on':'')+(speaking?' spk':'');
 }
 
-let captureBusy=false,captureActive=false;
+let captureBusy=false,captureActive=false,audioTestMode=false;
 function updateDevices(select,devices,defaults){
   const signature=JSON.stringify(devices||[]);
   if(select.dataset.devices===signature)return;
@@ -370,20 +382,29 @@ async function refreshState(){
   try{
     const r=await fetch('/api/state');if(!r.ok)throw new Error('状态获取失败');const s=await r.json();
     captureActive=!!(s.listening||s.self_listening);
-    $('captureStatus').textContent=s.listening&&s.self_listening?'双通道采集中':s.listening?'系统声音采集中':s.self_listening?'本人麦克风采集中':'未开启';
-    $('btnStart').disabled=captureBusy||!!s.listening;$('btnStop').disabled=captureBusy||!captureActive;
+    audioTestMode=!!s.audio_test_mode;
+    if(!captureBusy)$('audioTestMode').checked=audioTestMode;
+    $('audioTestMode').disabled=captureBusy||captureActive||speechModeBusy;
+    if(!speechModeBusy)$('speechMode').value=s.speech?.mode||'legacy';
+    $('speechMode').disabled=captureBusy||captureActive||speechModeBusy;
+    $('captureStatus').textContent=audioTestMode?(s.self_listening?'麦克风提问测试中':'麦克风提问测试 · 未开启'):s.listening&&s.self_listening?'双通道采集中':s.listening?'系统声音采集中':s.self_listening?'本人麦克风采集中':'未开启';
+    $('btnStart').disabled=captureBusy||(audioTestMode?!!s.self_listening:!!s.listening);$('btnStop').disabled=captureBusy||!captureActive;
     $('btnRefreshDevices').disabled=captureBusy||captureActive;
     $('btnRefreshDevices').title=captureActive?'暂停采集后刷新设备':'重新扫描耳机、扬声器和麦克风';
     $('previewBadge').hidden=!s.preview;
     const sel=$('deviceSel');
+    sel.disabled=captureBusy||audioTestMode;
     updateDevices(sel,s.devices,outputDefaults(s.devices));
     const msel=$('micSel');
     updateDevices(msel,s.input_devices,inputDefaults(s.input_devices));
+    msel.querySelector('option[value=""]').disabled=audioTestMode;
+    if(audioTestMode&&msel.value==='')msel.value='default';
+    $('micRoleLabel').textContent=audioTestMode?'提问 · 麦克风输入':'我 · 麦克风输入';
     if(!captureBusy){
       if(s.listening)restoreCaptureSelection(sel,s.engine,'');
       if(s.self_listening)restoreCaptureSelection(msel,s.self_engine,'default');
     }
-    $('outputDeviceState').textContent=s.listening?'采集中 · '+(s.engine?.device||'当前播放设备'):'尚未采集';
+    $('outputDeviceState').textContent=audioTestMode?'测试模式 · 已停用':s.listening?'采集中 · '+(s.engine?.device||'当前播放设备'):'尚未采集';
     $('inputDeviceState').textContent=s.self_listening?'采集中 · '+(s.self_engine?.device||'当前麦克风'):'尚未采集';
     // 麦克风电平条 + 状态
     if(s.self_engine){
@@ -393,7 +414,7 @@ async function refreshState(){
       fmtMicLevel(-100,false,false);
     }
     // 我的发言浮条
-    if(s.self_listening){
+    if(s.self_listening&&!audioTestMode){
       $('selfBar').style.display='block';
       $('selfBar').textContent='🎤 我(最近): '+(s.self_recent||'（开始说话后这里显示你的转写）');
     }else{
@@ -415,6 +436,7 @@ async function refreshState(){
       $('stateDot').className=e.speaking?'on speaking':'on';
     }else{
       $('stateDot').className='';
+      if(audioTestMode&&s.self_listening)$('stateDot').className=s.self_engine?.speaking?'on speaking':'on';
     }
   }catch(e){}
 }
@@ -623,6 +645,7 @@ function restoreSnapshot(event){
       }
       updateDirectionButtons(qa);
     }
+    for(const draft of event.speech_drafts||[])window.SpeechDrafts?.update(draft,event.session_id);
     streamEpoch=position.epoch;lastSequence=position.sequence;
     if(!followLatest&&selectedTurn){
       for(const item of $('questionList').children)item.setAttribute('aria-current',String(item.dataset.turnId===selectedTurn));
@@ -661,7 +684,9 @@ function connectSSE(){
       if(currentSession===null)currentSession=ev.session_id;
       if(ev.session_id!==currentSession)return;
     }
-    if(t==='question'){
+    if(t==='speech_draft'){
+      window.SpeechDrafts?.update(ev,currentSession);
+    }else if(t==='question'){
       const spk=ev.speaker||'interviewer';
       if(spk==='self'){
         // 麦克风通道：我的发言 → 右绿气泡，仅记录不触发答题
@@ -765,7 +790,7 @@ async function captureAction(work){
   if(captureBusy)return;
   captureBusy=true;
   $('captureNotice').hidden=true;$('captureNotice').classList.remove('error');
-  for(const id of ['btnStart','btnStop','micSel','deviceSel','btnRefreshDevices'])$(id).disabled=true;
+  for(const id of ['btnStart','btnStop','micSel','deviceSel','btnRefreshDevices','audioTestMode','speechMode'])$(id).disabled=true;
   try{await work();}catch(error){$('captureNotice').textContent=error.message;$('captureNotice').hidden=false;$('captureNotice').classList.add('error');}
   finally{
     captureBusy=false;$('micSel').disabled=false;$('deviceSel').disabled=false;
@@ -774,7 +799,7 @@ async function captureAction(work){
 }
 $('btnStart').onclick=async()=>{
   await captureAction(async()=>{
-    await captureRequest('start','loopback',$('deviceSel').value);
+    if(!audioTestMode)await captureRequest('start','loopback',$('deviceSel').value);
     if($('micSel').value!=='')await captureRequest('start','mic',$('micSel').value);
   });
 };
@@ -785,7 +810,14 @@ $('btnStop').onclick=async()=>{
   });
 };
 $('micSel').onchange=()=>{if(captureActive)captureAction(()=>captureRequest($('micSel').value===''?'stop':'start','mic',$('micSel').value));};
-$('deviceSel').onchange=()=>{if(captureActive)captureAction(()=>captureRequest('start','loopback',$('deviceSel').value));};
+$('deviceSel').onchange=()=>{if(captureActive&&!audioTestMode)captureAction(()=>captureRequest('start','loopback',$('deviceSel').value));};
+$('audioTestMode').onchange=()=>captureAction(async()=>{
+  const response=await fetch('/api/audio/test-mode',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({enabled:$('audioTestMode').checked})});
+  const result=await response.json();
+  if(!response.ok||!result.ok)throw new Error(result.error||'测试模式切换失败');
+  audioTestMode=result.enabled;
+});
 $('btnRefreshDevices').onclick=()=>captureAction(async()=>{
   const selections=[['deviceSel','devices','',outputDefaults],['micSel','input_devices','default',inputDefaults]].map(([id,key,fallback,defaults])=>{
     const select=$(id),previous=JSON.parse(select.dataset.devices||'[]').find(device=>String(device.index)===select.value);

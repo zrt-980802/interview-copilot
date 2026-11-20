@@ -140,6 +140,12 @@ def load_synthetic_server(monkeypatch, *, started=True):
             self.running = False
             self.device_index = None
             self.starts = []
+            self.speaker_tag = "self" if kwargs.get("mode") == "mic" else "interviewer"
+
+        def set_speaker_role(self, speaker):
+            assert not self.running
+            self.invalidate_pending()
+            self.speaker_tag = speaker
 
         def set_hotword_sources(self, **kwargs):
             self.hotwords = kwargs
@@ -216,6 +222,7 @@ def load_synthetic_server(monkeypatch, *, started=True):
                                         "provider_factory": lambda path, config: ProviderSettings(Path(module.test_library_directory.name) / "providers.db", config),
                                         "library_factory": lambda root, index, workers: DocumentLibrary(module.test_library_directory.name, index, workers),
                                         "worker_factory": ManualWorkers, "background": False}
+    module.app.state.runtime_options['recordings_dir'] = str(Path(module.test_library_directory.name) / 'recordings')
     if started:
         module.start_runtime(**module.app.state.runtime_options)
     return module

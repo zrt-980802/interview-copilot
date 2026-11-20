@@ -260,6 +260,14 @@ class CorpusIndex:
         focused = [row for row in unique.values()
                    if content_anchors.intersection(terms(row["excerpt"] + " " + row["heading"].rsplit(" / ", 1)[-1]))]
         candidates = focused or list(unique.values())
+        # Require independent topical support when a named-source query has
+        # strong matches. Fact search terms may be richer than the source quote.
+        topic_terms = set(query_terms) - title_anchors
+        if named_docs and topic_terms:
+            support = {id(row): len(topic_terms.intersection(row['body_terms'].split())) for row in candidates}
+            best = max(support.values(), default=0)
+            if best >= 3:
+                candidates = [row for row in candidates if support[id(row)] >= max(2, best / 2)]
         # Named technologies should outrank broad topic words in mixed-language queries.
         rows = sorted(candidates, key=lambda row: (
             -len(content_anchors.intersection(terms(row["excerpt"]))), row["rank"], row["source"], row["line_start"]))
@@ -284,8 +292,10 @@ class CorpusIndex:
                     combined[key] = row
                     scores[key] = scores.get(key,0) + weight / (60 + rank)
             rows = [combined[key] for key in sorted(scores,key=lambda key:(-scores[key],key))]
-        if named_docs:
-            rows = [row for row in rows if row["doc_id"] in named_docs]
+        # A noisy name can match an unrelated title. Never let it exclude
+        # passages that independently match the actual mechanism being asked.
+        if named_docs and not content_anchors:
+            rows.sort(key=lambda row: row["doc_id"] not in named_docs)
         results, counts = [], {}
         source_limit = limit if len({candidate["source"] for candidate in rows}) == 1 else 2
         for row in rows:

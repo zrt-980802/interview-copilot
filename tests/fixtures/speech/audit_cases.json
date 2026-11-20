@@ -1,0 +1,21 @@
+[
+  {"name":"wait_request","parts":["请稍等一下，我看一下你的简历。"],"expected_decision":"no_question"},
+  {"name":"wait_short","parts":["请等我一会儿。"],"expected_decision":"no_question"},
+  {"name":"audio_check","parts":["你能听清我说话吗？"],"expected_decision":"no_question"},
+  {"name":"camera_request","parts":["请打开摄像头。"],"expected_decision":"no_question"},
+  {"name":"scenario_intro","parts":["我先介绍一个场景。"],"expected_decision":"no_question"},
+  {"name":"cross_database","parts":["我们用两个数据库，订单库和库存库，不能放到同一个本地事务。你会怎么保证最终一致？"]},
+  {"name":"negation","parts":["我说的是不能自动付款，不是可以自动付款，你会怎么设计权限？"]},
+  {"name":"percentage","parts":["错误率从百分之三点五降到百分之二，绝对下降多少个百分点？"],"equivalent_transcript":"错误率从3.5%降到2%，绝对下降多少个百分点？"},
+  {"name":"duration_numbers","parts":["处理时间从十八秒降到八秒，这两个数字需要保留，你会怎么评价延迟？"],"equivalent_transcript":"处理时间从18秒降到8秒，这两个数字需要保留，你会怎么评价延迟？"},
+  {"name":"referent_correction","parts":["你刚才说的那个方案，不是第一个，是第二个，你再展开一下。"]},
+  {"name":"tool_cancellation","parts":["不使用任何框架，自己写一个智能体循环，执行到第十七步时用户点停止，已经产生的副作用怎么办？"]},
+  {"name":"pause_question","parts":["面试官在问问题时暂停了五秒，之后补充一个否定条件，语音助手应该怎么处理？"]},
+  {"name":"compare_imperative","parts":["对比一下进程与线程的开销和隔离性。"]},
+  {"name":"list_imperative","parts":["列举常见的数据库死锁原因及排查顺序。"]},
+  {"name":"talk_imperative","parts":["讲讲虚拟内存。"]},
+  {"name":"say_imperative","parts":["说说三次握手。"]},
+  {"name":"explain_index","parts":["能讲一下索引失效的常见原因吗？"]},
+  {"name":"complete_then_supplement","parts":["如何避免消息队列重复消费？",5,"还要考虑消费者已经提交事务，但是确认消息失败的情况。"],"expected_counts":[1,2],"note":"Accept one complete pipeline commit or two commits for server revision; all supplemental text must be covered."},
+  {"name":"complete_then_constraint","parts":["如何保证库存不能超卖？",3,"补充一下，库存和订单使用两个不同的数据库。"],"expected_counts":[1,2],"note":"Accept delayed full commit or delivery of the second fragment to the server continuation handler; all constraints must be retained."}
+]

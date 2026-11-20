@@ -45,7 +45,7 @@
 
 - 截图：`docs/evidence/m4-1-ui/`，包括 `workspace-desktop.png`、`pairing-desktop.png`、`phone-answer.png`、`phone-320x740-large.png` 和 `phone-light-focus.png`。二维码图片为已撤销的合成测试配对。
 - 当前本机合成预览：电脑 `http://127.0.0.1:8540`，手机界面 `http://127.0.0.1:8541`。仅绑定回环；这两个地址不能在另一台手机直接访问。正常使用按 [手机显示说明](mobile-display.md) 启动独立局域网端口。
-- 后台启动：`后台手机模式.bat`；终端方式：`venv\Scripts\python.exe server.py --mobile --auto-listen`。
+- 后台启动：`start-phone.bat`；终端方式：`venv\Scripts\python.exe server.py --mobile --auto-listen`。
 
 完整测试命令：
 
