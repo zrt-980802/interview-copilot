@@ -11,7 +11,7 @@ from interview_copilot.services.transcript_ledger import TranscriptLedger
 class TurnCoordinator:
     def __init__(self, *, clock=time.monotonic, min_quiet_ms=500, review_after_ms=8000,
                  endpoint_threshold=0.65, max_chars=24000, commit_quiet_ms=None, require_question=False,
-                 continuation_ms=8000):
+                 continuation_ms=8000, endpoint_retry_ms=1200, endpoint_max_attempts=3):
         self.clock = clock
         self.min_quiet = min_quiet_ms / 1000
         self.review_after = review_after_ms / 1000
@@ -20,6 +20,8 @@ class TurnCoordinator:
         self.require_question = require_question
         self.max_chars = max_chars
         self.continuation_seconds = continuation_ms / 1000
+        self.endpoint_retry = endpoint_retry_ms / 1000
+        self.endpoint_max_attempts = endpoint_max_attempts
         self.clear()
 
     def clear(self):
@@ -31,6 +33,8 @@ class TurnCoordinator:
         self.quiet_since = None
         self.endpoint = None
         self.endpoint_requested = None
+        self.endpoint_completed_at = None
+        self.endpoint_attempts = 0
         self.emitted = None
         self.committed = False
         self.revision = 0
@@ -59,6 +63,8 @@ class TurnCoordinator:
             if not self.speaking:
                 self.activity_version += 1
                 self.endpoint = self.endpoint_requested = self.emitted = None
+                self.endpoint_completed_at = None
+                self.endpoint_attempts = 0
             self.speaking, self.speech_end = True, end_sample
             self.quiet_since = None
         elif self.speaking:
@@ -72,10 +78,10 @@ class TurnCoordinator:
         self.ledger.register(window)
         return self.draft_id
 
-    def transcript(self, draft_id, seq, result, *, revision=0, final=True):
+    def transcript(self, draft_id, seq, result, *, revision=0, final=True, signal=None):
         if draft_id != self.draft_id or self.committed:
             return False
-        if not self.ledger.update(seq, result, revision=revision, final=final):
+        if not self.ledger.update(seq, result, revision=revision, final=final, signal=signal):
             return False
         self.revision += 1
         self.emitted = None
@@ -94,22 +100,34 @@ class TurnCoordinator:
         self._refresh()
 
     def endpoint_request(self):
-        if not self.draft_id or self.committed or self.speaking or self.quiet_since is None:
+        if (not self.draft_id or self.committed or self.speaking or self.quiet_since is None
+                or self.manual_hold or self.ledger.error):
             return None
-        if self.clock() - self.quiet_since < self.min_quiet or self.endpoint_requested is not None:
+        now = self.clock()
+        if (now - self.quiet_since < self.min_quiet or now - self.quiet_since >= self.review_after
+                or self.endpoint_attempts >= self.endpoint_max_attempts
+                or self.endpoint is not None and self.endpoint >= self.endpoint_threshold):
             return None
-        token = (self.draft_id, self.activity_version, self.speech_end)
+        if self.endpoint_requested is not None and (self.endpoint_completed_at is None
+                or now - self.endpoint_completed_at < self.endpoint_retry):
+            return None
+        self.endpoint_attempts += 1
+        token = (self.draft_id, self.activity_version, self.speech_end, self.endpoint_attempts)
         self.endpoint_requested = token
+        self.endpoint_completed_at = None
         self._refresh()
         return token
 
     def endpoint_result(self, token, probability):
-        if token != (self.draft_id, self.activity_version, self.speech_end) or self.speaking or self.committed:
+        if (token is None or token != self.endpoint_requested
+                or token[:3] != (self.draft_id, self.activity_version, self.speech_end)
+                or self.endpoint_completed_at is not None or self.speaking or self.committed):
             return False
         if probability is not None and (isinstance(probability, bool) or not isinstance(probability, (int, float))
                                         or not math.isfinite(probability) or not 0 <= probability <= 1):
             raise ValueError("invalid endpoint probability")
         self.endpoint = probability
+        self.endpoint_completed_at = self.clock()
         self._refresh()
         return True
 
@@ -121,26 +139,31 @@ class TurnCoordinator:
             self.state = "committed"
         elif self.manual_hold:
             self.state, self.reason = "needs_review", "editing"
-        elif self.ledger.error or len(self.ledger.text) > self.max_chars:
+        elif self.ledger.error or len(self.ledger.raw_text) > self.max_chars:
             self.state, self.reason = "needs_review", self.ledger.error or "text_budget"
         elif self.speaking:
             self.state = "collecting"
-        elif self.quiet_since is not None and self.clock() - self.quiet_since >= self.review_after:
-            self.state, self.reason = "needs_review", "waiting_for_completion"
         elif self.endpoint is not None and self.endpoint >= self.endpoint_threshold:
             if not self.ledger.complete_through(self.speech_end):
-                self.state = "awaiting_transcript"
+                self._waiting("awaiting_transcript", "awaiting_transcript")
             elif looks_unfinished(self.ledger.text):
-                self.state, self.reason = "collecting", "unfinished"
+                self._waiting("collecting", "unfinished")
             elif (self.require_question and not has_question_cue(self.ledger.text) and not self._continuation()
                   and not is_non_question(self.ledger.text) and not is_background(self.ledger.text)):
-                self.state, self.reason = "collecting", "awaiting_question"
+                self._waiting("collecting", "awaiting_question")
             elif self.clock() - self.quiet_since < self.commit_quiet:
                 self.state = "evaluating"
             else:
                 self.state = "ready"
         else:
-            self.state = "evaluating" if self.endpoint_requested else "collecting"
+            reason = ("endpoint_pending" if self.endpoint_requested and self.endpoint_completed_at is None
+                      else "endpoint_low" if self.endpoint is not None
+                      else "endpoint_unavailable" if self.endpoint_attempts else "waiting_for_completion")
+            self._waiting("evaluating" if self.endpoint_requested else "collecting", reason)
+
+    def _waiting(self, state, reason):
+        overdue = self.quiet_since is not None and self.clock() - self.quiet_since >= self.review_after
+        self.state, self.reason = ("needs_review" if overdue else state), reason
 
     def proposal(self):
         self._refresh()
@@ -178,5 +201,6 @@ class TurnCoordinator:
     def snapshot(self):
         self._refresh()
         return {"draft_id": self.draft_id, "revision": self.revision, "state": self.state,
-                "reason": self.reason, "text": self.ledger.text, "speaking": self.speaking,
+                "reason": self.reason, "text": self.ledger.raw_text, "speaking": self.speaking,
+                "endpoint_attempts": self.endpoint_attempts,
                 "finalized_through_sample": self.ledger.finalized_through_sample}

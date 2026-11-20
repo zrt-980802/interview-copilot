@@ -9,6 +9,9 @@
 .draft-heading{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;margin-bottom:6px;font-size:13px}
 .draft-heading strong{font-size:13px;color:var(--fg)}
 .draft-heading [role="status"]{color:var(--accent);font-size:12px}
+.speech-draft:not(.requires-review) .draft-heading{margin-bottom:0}
+.speech-draft:not(.requires-review) .draft-heading [role="status"]{color:var(--dim)}
+.speech-draft.requires-review{border-inline-start:2px solid var(--accent);padding-inline-start:10px}
 .speech-draft textarea{display:block;width:100%;resize:vertical;min-height:48px;max-height:100px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--fg);padding:8px;font-family:inherit;font-size:14px;line-height:1.5;overflow-wrap:anywhere}
 .draft-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:6px;min-height:32px}
 .draft-actions button{display:flex;align-items:center;justify-content:center;gap:6px;min-width:32px;height:32px;padding:4px 8px;border-radius:4px;flex-shrink:0}

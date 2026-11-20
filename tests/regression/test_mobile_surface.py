@@ -11,6 +11,7 @@ import pytest
 
 from conftest import load_synthetic_server
 from interview_copilot.legacy.mobile import COOKIE
+from interview_copilot.legacy.mobile import display_event, display_snapshot
 from interview_copilot.services.listeners import serve_listeners
 
 
@@ -134,6 +135,19 @@ def test_snapshot_shares_answer_but_excludes_private_context(legacy_server):
     assert "private-resume-excerpt" not in response.text
     assert response.json()["turns"][0]["turn_id"] == context.turn_id.value
     assert response.json()["turns"][0]["answers"][0]["document"]["sources"] == []
+
+
+def test_phone_speech_status_projects_only_whitelisted_states_never_draft_content():
+    draft = {'speaker':'interviewer', 'state':'needs_review', 'reason':'low_audio_level',
+             'text':'private draft text', 'raw_text':'private raw text', 'draft_id':'private-id'}
+    event = display_event({'type':'speech_draft','event_id':'cursor','session_id':'s',**draft})
+    assert event == {'type':'speech_status','event_id':'cursor','session_id':'s',
+                     'speaker':'interviewer','state':'needs_review','reason':'low_audio_level'}
+    snapshot = display_snapshot({'turns':[],'speech_drafts':[draft]}, {})
+    assert snapshot['speech_status'] == [{'speaker':'interviewer','state':'needs_review','reason':'low_audio_level'}]
+    assert 'private' not in json.dumps(snapshot)
+    event = display_event({'type':'speech_draft','event_id':'cursor',**draft,'reason':'private reason'})
+    assert event['reason'] == ''
 
 
 def stream_response(server, token, cursor=None):

@@ -1,5 +1,7 @@
 const {test,before,after}=require('node:test');
 const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
 const {chromium}=require('playwright');
 const base=process.env.INTERVIEW_PREVIEW_URL,skip=!base;
 let browser;
@@ -69,5 +71,42 @@ test('device refresh errors appear next to capture controls and permit retry',{s
   assert.doesNotMatch(await page.locator('#feed').innerText(),/模拟设备刷新失败/);
   fail=false;await page.locator('#btnRefreshDevices:not([disabled])').click();
   await page.locator('#captureNotice:not(.error)').filter({hasText:'设备列表已刷新'}).waitFor();
+  assert.deepEqual(errors,[]);
+});
+
+test('capture settings collapse without stopping audio, survive reload and new session, and keep pause accessible',{skip},async t=>{
+  const {page,request,errors}=await fixture(t);
+  assert.equal((await(await request.get(base+'/api/health')).json()).preview,true);
+  for(const source of ['loopback','mic'])await request.post(base+'/api/stop',{data:{source}});
+  t.after(async()=>{for(const source of ['loopback','mic'])await fetch(base+'/api/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source})});});
+  await page.goto(base);await page.locator('#btnStart').click();
+  await page.waitForFunction(()=>document.querySelector('#captureStatus').textContent==='双通道采集中');
+  const expanded=await page.locator('.reader').boundingBox();
+  await page.getByRole('button',{name:'收起声音设置'}).click();
+  assert.equal(await page.locator('#captureSettings').isVisible(),false);
+  assert.ok((await page.locator('.reader').boundingBox()).height>expanded.height+80);
+  assert.equal(await page.locator('#btnCaptureToggle').getAttribute('aria-expanded'),'false');
+  assert.match(await page.locator('#captureStatus').innerText(),/双通道采集中/);
+  await page.reload();
+  await page.locator('#btnCapturePause').waitFor();
+  assert.equal(await page.locator('#captureSettings').isVisible(),false);
+  page.on('dialog',dialog=>dialog.accept());await page.locator('#btnClear').click();
+  assert.equal(await page.locator('#captureSettings').isVisible(),false);
+  for(const viewport of [{width:320,height:740},{width:390,height:844},{width:1365,height:500}]){
+    await page.setViewportSize(viewport);
+    assert.equal(await page.locator('#btnCaptureToggle').isVisible(),true);
+    assert.equal(await page.locator('#btnCapturePause').isVisible(),true);
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    if(process.env.INTERVIEW_SCREENSHOT_DIR){
+      fs.mkdirSync(process.env.INTERVIEW_SCREENSHOT_DIR,{recursive:true});
+      await page.screenshot({path:path.join(process.env.INTERVIEW_SCREENSHOT_DIR,'capture-collapsed-'+viewport.width+'.png'),fullPage:true});
+    }
+  }
+  await page.locator('#btnCapturePause').click();
+  await page.waitForFunction(()=>document.querySelector('#captureStatus').textContent==='未开启');
+  const state=await(await request.get(base+'/api/state')).json();
+  assert.equal(state.listening,false);assert.equal(state.self_listening,false);
+  await page.getByRole('button',{name:'展开声音设置'}).click();
+  assert.equal(await page.locator('#captureSettings').isVisible(),true);
   assert.deepEqual(errors,[]);
 });

@@ -97,12 +97,12 @@ class SessionRecordings:
             self.queue.put(('audio', (dict(current), source, bytes(raw), rate, channels, speaker, offset)))
 
     def event(self, event):
-        if event.get('type') not in {'question', 'stt_transcript', 'speech_decision', 'stt_rejected'}:
+        if event.get('type') not in {'question', 'stt_transcript', 'speech_decision', 'stt_rejected', 'speech_commit'}:
             return
         with self.capture_lock:
             if self.active and self.enabled and not self.closed:
                 value = {k: event[k] for k in ('type', 'source', 'speaker', 'text', 'duration_ms', 'reason',
-                                              'start_sample', 'end_sample', 'input_generation') if k in event}
+                                              'start_sample', 'end_sample', 'input_generation', 'timings_ms', 'signal') if k in event}
                 value['at_ms'] = (time.monotonic() - self.active['origin']) * 1000
                 self.queue.put(('event', (dict(self.active), value)))
 

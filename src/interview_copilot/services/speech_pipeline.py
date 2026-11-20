@@ -7,12 +7,14 @@ callbacks are always outside the state lock to preserve API lock ordering.
 import io
 import threading
 import wave
+import time
 
 import numpy as np
 
 from interview_copilot.audio.windows import AudioRing
 from interview_copilot.domain.speech import Recognition, SpeechWindow
 from interview_copilot.services.speech_turns import TurnCoordinator
+from interview_copilot.services.speech_quality import audio_signal
 
 
 def validate_options(options):
@@ -68,6 +70,7 @@ class SpeechPipeline:
         self.last_snapshot = None
         self.futures = set()
         self.cancelled = False
+        self.stage_timings = {}
 
     def is_current(self):
         return not self.cancelled and self.current()
@@ -83,6 +86,8 @@ class SpeechPipeline:
             jobs = []
             with self.lock:
                 was_committed = self.turns.committed
+                if was_committed and probability >= float(self.options.get('vad_threshold', .5)):
+                    self.stage_timings = {}
                 self.audio.append(frame)
                 speaking = probability >= float(self.options.get("vad_threshold", 0.5))
                 self.turns.activity(speaking, self.audio.end)
@@ -140,6 +145,16 @@ class SpeechPipeline:
         else:
             work = lambda: self.transcribe(wav_bytes(samples))
             duration = len(samples) / 16
+        signal = audio_signal(samples) if kind == "transcript" else None
+        queued_at, timing = time.perf_counter(), {}
+        operation = work
+        def work():
+            started = time.perf_counter()
+            timing['queue_ms'] = (started-queued_at)*1000
+            try:
+                return operation()
+            finally:
+                timing['processing_ms'] = (time.perf_counter()-started)*1000
         try:
             future = self.scheduler.submit(duration, work, current=self.is_current, endpoint=kind == "endpoint")
         except RuntimeError:
@@ -163,17 +178,22 @@ class SpeechPipeline:
                     return
                 try:
                     if kind == "endpoint":
-                        self.turns.endpoint_result(identity, None if error else value)
+                        if self.turns.endpoint_result(identity, None if error else value):
+                            self.stage_timings.update({'endpoint_' + key: round(value, 3) for key, value in timing.items()})
                     else:
                         draft_id, window = identity
                         if error:
                             self.turns.fail(draft_id, window.seq, "recognition_failed")
                         else:
                             result = value if isinstance(value, Recognition) else Recognition(value)
-                            self.turns.transcript(draft_id, window.seq, result)
+                            updated = self.turns.transcript(draft_id, window.seq, result, signal=signal)
+                            if updated:
+                                self.stage_timings.update({'asr_' + key: round(value, 3) for key, value in timing.items()})
                             # Preserve raw ASR independently of later intent rejection.
                             transcript_event = {'type': 'stt_transcript', 'text': result.text,
-                                                'start_sample': window.start_sample, 'end_sample': window.end_sample}
+                                                'start_sample': window.start_sample, 'end_sample': window.end_sample,
+                                                'signal': signal,
+                                                'timings_ms': {'asr_' + key: round(value, 3) for key, value in timing.items()}}
                 except (ValueError, TypeError):
                     self.turns.gap("invalid_speech_result")
                 events = self._events()
@@ -193,7 +213,7 @@ class SpeechPipeline:
             events.append({"type": "speech_draft", **snapshot})
         proposal = self.turns.proposal()
         if proposal:
-            events.append({"type": "speech_commit", **proposal})
+            events.append({"type": "speech_commit", **proposal, 'timings_ms': dict(self.stage_timings)})
         return events
 
     def _emit(self, events):

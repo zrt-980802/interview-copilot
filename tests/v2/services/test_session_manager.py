@@ -24,6 +24,24 @@ def test_sessions_and_captured_context_are_isolated():
         a.generation = 9
 
 
+def test_stage_timings_follow_task_identity_and_reset_only_the_provider_attempt():
+    manager, sid = SessionManager(), SessionId('timing')
+    manager.create_session(sid)
+    old = manager.start_turn(sid,'first')
+    assert manager.record_timing(old,'retrieval_ms',12)
+    assert manager.begin_attempt(old,1,'primary')
+    manager.record_timing(old,'generation_first_content_ms',3,first=True)
+    manager.record_timing(old,'generation_first_content_ms',99,first=True)
+    assert manager.completion_snapshot(old,'answer').document['timings_ms']['generation_first_content_ms'] == 3
+    assert manager.begin_attempt(old,2,'fallback')
+    timings=manager.completion_snapshot(old,'answer').document['timings_ms']
+    assert timings == {'retrieval_ms':12}
+    manager.start_turn(sid,'second')
+    assert not manager.record_timing(old,'retrieval_ms',20)
+    with pytest.raises(ValueError):
+        manager.record_timing(old,'retrieval_ms',float('nan'))
+
+
 def test_new_turn_invalidates_old_quick_and_advances_generation():
     manager = SessionManager()
     session = SessionId("session")
@@ -89,6 +107,29 @@ def test_history_is_a_snapshot_and_ignores_unanswered_superseded_turns():
     assert manager.history(current) == (
         ("user", "first"), ("assistant", "first answer"), ("user", "current")
     )
+
+
+def test_followup_uses_revised_question_and_associates_the_candidates_reply_while_answer_is_pending():
+    manager = SessionManager()
+    session = SessionId("session")
+    manager.create_session(session)
+    first = manager.start_turn(session, "你负责的订单系统如何扣库存？")
+    manager.finish(first, "先在同一数据库事务中处理。")
+    complete_question = "你负责的订单系统如何扣库存？补充：两个独立数据库，不能用分布式事务。"
+    revision = manager.revise_turn(session, first.turn_id, complete_question)
+    manager.note_candidate_speech(session, "我用的是本地事务和消息表。")
+    followup = manager.start_turn(session, "那如果消息重复投递呢？")
+    assert manager.history(followup) == (("user", complete_question), ("user", "那如果消息重复投递呢？"))
+    dialogue = manager.dialogue(followup)
+    assert dialogue["referent_question"] == complete_question
+    assert dialogue["candidate_turns"][0]["question"] == complete_question
+    assert "本地事务和消息表" in dialogue["candidate_turns"][0]["text"]
+    assert manager.turn(session, first.turn_id).revisions == ({
+        "question": "你负责的订单系统如何扣库存？", "answer": "先在同一数据库事务中处理。",
+        "answer_status": "complete",
+    },)
+    assert not manager.finish(revision, "迟到的文本")
+    assert not manager.dialogue(manager.start_turn(session, "换个话题，讲讲 Redis 缓存"))["referent_question"]
 
 
 def test_failure_is_terminal_and_duplicate_detail_is_rejected():

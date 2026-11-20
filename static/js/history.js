@@ -1,4 +1,4 @@
-import {draftDocument, isAnswerDocument, renderDocument} from '/static/js/answer-content.js';
+import {draftDocument, isAnswerDocument, renderDocument, renderRevisions} from '/static/js/answer-content.js';
 import {recordingReview} from '/static/js/recording-review.js';
 
 const $ = id => document.getElementById(id);
@@ -68,9 +68,16 @@ function renderSession(value) {
   fragment.append(recordingReview(value.id));
   for (const [index, turn] of value.turns.entries()) {
     const article = node('article', 'history-turn'); article.dataset.turnId = turn.id;
-    article.append(node('div', 'turn-index', `问题 ${index + 1} · ${turn.ts}`), node('h3', '', turn.question));
+    article.append(node('div', 'turn-index', `问题 ${index + 1} · ${turn.ts}`));
+    if (turn.revisions?.length) article.append(node('div', 'turn-revision-label', '补充后的完整问题'));
+    article.append(node('h3', '', turn.question));
     if (turn.quick_card) article.append(answerView(turn.quick_card, 'quick', turn.quick_document, turn.quick_document_status, turn.quick_meta));
     else article.append(node('div', 'unanswered', '未保存完整回答'));
+    if (turn.revisions?.length) {
+      const old = node('div', 'previous-revisions');
+      renderRevisions(old, turn.revisions);
+      article.append(old);
+    }
     if (turn.self_context) {
       const context = node('details', 'candidate-context');
       context.append(node('summary', '', '当时的发言记录'), node('pre', '', turn.self_context)); article.append(context);

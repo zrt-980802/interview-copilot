@@ -196,6 +196,7 @@
   .kbupload .btn:hover{border-color:var(--accent)}
   #kbClose{float:right;background:none;border:none;color:var(--dim);font-size:18px;cursor:pointer}
 </style>
+<link rel="stylesheet" href="/static/answer-content.css">
 <link rel="stylesheet" href="/static/workspace.css">
 <link rel="stylesheet" href="/static/app-shell.css">
 <script src="/static/vendor/lucide.js" defer></script>
@@ -210,11 +211,24 @@
     <a href="/history"><i data-lucide="history"></i>历史复盘</a>
     <a href="/settings"><i data-lucide="settings-2"></i>模型设置</a>
   </nav>
+  <div class="workspace-views" role="group" aria-label="工作区视图">
+    <button id="viewWorkbench" type="button" aria-pressed="true" title="完整工作台"><i data-lucide="columns-2"></i><span>工作台</span></button>
+    <button id="viewFocus" type="button" aria-pressed="false" title="专注视图"><i data-lucide="scan"></i><span>专注</span></button>
+  </div>
   <span id="previewBadge" class="preview-mark" hidden>离线演示</span>
 </header>
 
-<section class="capture-panel" aria-label="声音采集">
-  <div class="capture-heading"><h2>声音采集</h2><span class="capture-status" role="status"><span id="stateDot"></span><span id="captureStatus">未开启</span></span><button id="btnRefreshDevices" class="command subtle"><i data-lucide="refresh-cw"></i>刷新设备</button></div>
+<section id="capturePanel" class="capture-panel" aria-label="声音采集">
+  <div class="capture-heading">
+    <h2>声音采集</h2><span class="capture-status" role="status"><span id="stateDot"></span><span id="captureStatus">状态待检查</span></span>
+    <span id="captureSignal" class="capture-signal" hidden>当前未检测到发言</span>
+    <div class="capture-heading-actions">
+      <button id="btnRefreshDevices" class="command subtle"><i data-lucide="refresh-cw"></i>刷新设备</button>
+      <button id="btnCapturePause" class="command capture-icon" title="暂停采集" aria-label="暂停采集" hidden><i data-lucide="pause"></i></button>
+      <button id="btnCaptureToggle" class="command capture-icon" title="收起声音设置" aria-label="收起声音设置" aria-expanded="true" aria-controls="captureSettings"><i data-lucide="chevron-up"></i></button>
+    </div>
+  </div>
+  <div id="captureSettings">
   <div class="capture-controls">
     <label class="device-control"><span><i data-lucide="headphones"></i>面试官 · 播放设备</span><select id="deviceSel" aria-label="面试官播放设备" title="会议软件播放声音的耳机、扬声器或声卡"><option value="">系统默认输出</option></select><small id="outputDeviceState">尚未采集</small></label>
     <label class="device-control"><span><i data-lucide="mic"></i><span id="micRoleLabel">我 · 麦克风输入</span></span><select id="micSel" aria-label="本人麦克风" title="本人麦克风"><option value="default">系统默认输入</option><option value="">关闭本人麦克风</option></select><small id="inputDeviceState">尚未采集</small></label>
@@ -224,7 +238,6 @@
       <button id="btnRecal" class="command subtle" title="重新校准" aria-label="重新校准"><i data-lucide="sliders-horizontal"></i>校准</button>
     </div>
   </div>
-  <div id="captureNotice" role="status" hidden></div>
   <div class="capture-options">
     <label class="speech-mode-control">语音流程 <select id="speechMode" aria-label="语音流程" title="暂停两路采集后切换，仅当前运行期间生效"><option value="legacy">兼容流程</option><option value="active">连续语音 · 试用</option></select></label>
     <label class="audio-test-control" title="暂停采集后切换"><input id="audioTestMode" type="checkbox">麦克风提问测试</label>
@@ -234,14 +247,16 @@
     <span class="level-reading"><span id="micDot">本人麦克风</span><span id="micBarOuter"><span id="micBar"></span></span><span id="micDbLabel">-- dB</span></span>
     <span id="floorLabel" hidden></span>
   </div>
+  </div>
+  <div id="captureNotice" role="status" hidden></div>
 </section>
-
-<section id="speechDrafts" class="speech-drafts" aria-label="语音草稿" hidden></section>
 
 <div class="session-toolbar">
   <div class="session-title"><h1>实时面试</h1><span id="resumeBadge">简历检测中…</span></div>
   <div class="session-commands">
     <span id="recordingState" class="pill" role="status"></span>
+    <button id="toggleQuestions" class="command subtle" type="button" aria-controls="questionSidebar" aria-expanded="true"><i data-lucide="list"></i><span>问题列表</span></button>
+    <button id="togglePreparation" class="command subtle" type="button" aria-controls="preparation" aria-expanded="false"><i data-lucide="list-checks"></i><span>面试准备</span></button>
     <button id="btnResume" class="command subtle"><i data-lucide="file-user"></i>管理简历</button>
     <button id="btnPhone" class="command"><i data-lucide="smartphone"></i>手机显示</button>
     <button id="btnClear" class="command"><i data-lucide="list-plus"></i>新会话</button>
@@ -250,12 +265,27 @@
 </div>
 
 <div class="workspace">
-<aside class="question-nav" aria-label="当前会话题目">
+<aside id="questionSidebar" class="question-nav" aria-label="当前会话题目">
   <div class="nav-heading"><span>当前会话</span><span id="questionCount">0 题</span></div>
   <nav id="questionList"></nav>
 </aside>
 <main class="reader">
+<div id="captureIssue" class="capture-issue" hidden>
+  <span id="captureIssueText" role="status"></span>
+  <button id="checkCapture" type="button" class="command subtle"><i data-lucide="sliders-horizontal"></i>查看声音设置</button>
+</div>
+<section id="speechDrafts" class="speech-drafts" aria-label="语音草稿" hidden></section>
 <div id="feed">
+  <section id="preparation" aria-labelledby="preparationTitle" hidden>
+    <h2 id="preparationTitle">面试准备</h2>
+    <dl class="preparation-list">
+      <div><dt>面试官播放设备</dt><dd id="prepOutput">未检查</dd></div>
+      <div><dt>本人麦克风</dt><dd id="prepMic">未检查</dd></div>
+      <div><dt><a href="/settings">回答模型</a></dt><dd id="prepModel">未检查</dd></div>
+      <div><dt><a href="/files">作答资料</a></dt><dd id="prepMaterials">未检查</dd></div>
+      <div><dt><a href="/settings">录音归档</a></dt><dd id="prepRecording">未检查</dd></div>
+    </dl>
+  </section>
   <div id="readerEmpty" class="reader-empty"><i data-lucide="messages-square"></i><span>等待新问题</span></div>
   <div id="selfBar" class="sysmsg" style="display:none;color:#7ee2a8"></div>
 </div>
@@ -296,6 +326,7 @@
   </div>
 </div>
 
+<script src="/static/js/workspace-view.js"></script>
 <script src="/static/js/speech-drafts.js"></script>
 <script src="/static/js/session-recording.js" type="module"></script>
 <script>
@@ -316,7 +347,9 @@ function resetSession(sessionId,announce=true){
   if(announce){followReading=true;$('followLatest').hidden=true;}
   window._pendingBub=null;window._voiceQ=false;
   const selfBar=$('selfBar');
-  $('feed').replaceChildren();
+  $('feed').replaceChildren($('preparation'));
+  window.WorkspaceView.hasQuestions(false);
+  if(announce)window.dispatchEvent(new Event('workspace-recording-changed'));
   if(selfBar){selfBar.style.display='none';selfBar.textContent='';$('feed').appendChild(selfBar);}
   const empty=document.createElement('div');empty.id='readerEmpty';empty.className='reader-empty';
   empty.innerHTML='<i data-lucide="messages-square"></i><span>等待新问题</span>';
@@ -353,7 +386,43 @@ function fmtMicLevel(db,speaking,active){
   $('micDot').className='pill'+(active?' on':'')+(speaking?' spk':'');
 }
 
-let captureBusy=false,captureActive=false,audioTestMode=false;
+let captureBusy=false,captureActive=false,audioTestMode=false,stateRequest=0,appliedStateRequest=0;
+function setCaptureCollapsed(collapsed,persist=true){
+  $('capturePanel').classList.toggle('is-collapsed',collapsed);
+  $('captureSettings').hidden=collapsed;
+  const button=$('btnCaptureToggle'),icon=document.createElement('i');
+  button.setAttribute('aria-expanded',String(!collapsed));
+  button.title=collapsed?'展开声音设置':'收起声音设置';
+  button.setAttribute('aria-label',button.title);
+  icon.dataset.lucide=collapsed?'chevron-down':'chevron-up';button.replaceChildren(icon);
+  $('btnCapturePause').hidden=!collapsed||!captureActive;
+  window.lucide?.createIcons();
+  if(persist&&document.body.dataset.workspaceView!=='focus'){
+    try{localStorage.setItem('capture-settings-collapsed',String(collapsed));}catch{}
+  }
+}
+$('btnCaptureToggle').onclick=()=>setCaptureCollapsed(!$('captureSettings').hidden);
+$('btnCapturePause').onclick=()=>$('btnStop').click();
+try{setCaptureCollapsed(localStorage.getItem('capture-settings-collapsed')==='true');}catch{setCaptureCollapsed(false);}
+window.WorkspaceView.captureLayout=focus=>{
+  let collapsed=focus;
+  if(!focus){try{collapsed=localStorage.getItem('capture-settings-collapsed')==='true';}catch{}}
+  setCaptureCollapsed(collapsed,false);
+};
+$('checkCapture').onclick=()=>{
+  setCaptureCollapsed(false);
+  $('capturePanel').scrollIntoView({block:'nearest'});
+  ($('deviceSel').disabled?$('micSel'):$('deviceSel')).focus({preventScroll:true});
+};
+window.WorkspaceView.init(change=>{
+  const feed=$('feed'), follow=followReading;
+  const selected=$('questionList').querySelector('[aria-current="true"]');
+  const card=qaByTurn.get(selected?.dataset.turnId)?.el;
+  const offset=card?.getBoundingClientRect().top-feed.getBoundingClientRect().top;
+  change();
+  if(follow&&qaByTurn.size)feed.scrollTop=feed.scrollHeight;
+  else if(card)feed.scrollTop+=card.getBoundingClientRect().top-feed.getBoundingClientRect().top-offset;
+});
 function updateDevices(select,devices,defaults){
   const signature=JSON.stringify(devices||[]);
   if(select.dataset.devices===signature)return;
@@ -379,8 +448,11 @@ function restoreCaptureSelection(select,engine,defaultValue){
   select.value=value;
 }
 async function refreshState(){
+  const request=++stateRequest;
   try{
     const r=await fetch('/api/state');if(!r.ok)throw new Error('状态获取失败');const s=await r.json();
+    if(request<appliedStateRequest)return;
+    appliedStateRequest=request;
     captureActive=!!(s.listening||s.self_listening);
     audioTestMode=!!s.audio_test_mode;
     if(!captureBusy)$('audioTestMode').checked=audioTestMode;
@@ -388,7 +460,11 @@ async function refreshState(){
     if(!speechModeBusy)$('speechMode').value=s.speech?.mode||'legacy';
     $('speechMode').disabled=captureBusy||captureActive||speechModeBusy;
     $('captureStatus').textContent=audioTestMode?(s.self_listening?'麦克风提问测试中':'麦克风提问测试 · 未开启'):s.listening&&s.self_listening?'双通道采集中':s.listening?'系统声音采集中':s.self_listening?'本人麦克风采集中':'未开启';
+    const sources=[s.listening?s.engine:null,s.self_listening?s.self_engine:null].filter(Boolean);
+    $('captureSignal').hidden=!sources.length||!sources.every(engine=>engine.speaking===false);
     $('btnStart').disabled=captureBusy||(audioTestMode?!!s.self_listening:!!s.listening);$('btnStop').disabled=captureBusy||!captureActive;
+    $('btnCapturePause').hidden=!$('captureSettings').hidden||!captureActive;
+    $('btnCapturePause').disabled=$('btnStop').disabled;
     $('btnRefreshDevices').disabled=captureBusy||captureActive;
     $('btnRefreshDevices').title=captureActive?'暂停采集后刷新设备':'重新扫描耳机、扬声器和麦克风';
     $('previewBadge').hidden=!s.preview;
@@ -438,7 +514,14 @@ async function refreshState(){
       $('stateDot').className='';
       if(audioTestMode&&s.self_listening)$('stateDot').className=s.self_engine?.speaking?'on speaking':'on';
     }
-  }catch(e){}
+    window.WorkspaceView.updateCapture(s);
+  }catch(e){
+    if(request<appliedStateRequest)return;
+    appliedStateRequest=request;
+    $('captureStatus').textContent='采集状态未知';
+    $('captureSignal').hidden=true;
+    window.WorkspaceView.updateCapture(null);
+  }
 }
 
 function addSys(msg,isErr){
@@ -496,19 +579,34 @@ function addBubble(text, who, side, ts){
   return row.querySelector('.bub');
 }
 
+function showRevision(qa,event){
+  const revisions=Array.isArray(event.revisions)?event.revisions:[];
+  qa.revised=Boolean(event.revision_count||event.revised||revisions.length);
+  qa.el.querySelector('.turn-revision-label').hidden=!qa.revised;
+  const container=qa.el.querySelector('.previous-revisions');
+  const render=api=>{
+    if(api?.renderRevisions&&container.isConnected&&qa.generation===event.generation)api.renderRevisions(container,revisions);
+  };
+  if(window.AnswerContent)render(window.AnswerContent);else answerContentReady.then(render);
+}
+
 function beginQA(q,ts,event){
   $('readerEmpty')?.remove();
+  window.WorkspaceView.hasQuestions(true);
   curQA={};
   const qa=document.createElement('div');qa.className='qa';
   qa.dataset.turnId=event.turn_id;
-  qa.innerHTML=`<div class="qbox"><span class="t">${ts}</span>${md(q)}</div>
-    <div class="quickcard pending">思考中…</div>`;
+  qa.innerHTML=`<div class="turn-revision-label" hidden>补充后的完整问题</div>
+    <div class="qbox"><span class="t">${esc(ts)}</span>${md(q)}</div>
+    <div class="quickcard pending">思考中…</div>
+    <div class="previous-revisions" hidden></div>`;
   $('feed').appendChild(qa);scrollToContent(qa);
   Object.assign(curQA,{el:qa,card:qa.querySelector('.quickcard'),subs:new Map(),
     sessionId:event.session_id,turnId:event.turn_id,generation:event.generation,status:'pending'});
+  showRevision(curQA,event);
   qaByTurn.set(event.turn_id,curQA);
   const link=document.createElement('button');link.className='question-link';
-  link.dataset.turnId=event.turn_id;
+  link.dataset.turnId=event.turn_id;link.title=q;
   const index=document.createElement('span');index.className='nav-index';index.textContent='问题 '+qaByTurn.size;
   const label=document.createElement('span');label.className='nav-label';label.textContent=q;
   link.append(index,label);link.setAttribute('aria-current',String(followReading||qaByTurn.size===1));
@@ -570,7 +668,7 @@ function renderAnswer(target,content,status,error='',answerDoc=null){
   if(status==='error'&&!content){
     body.textContent='';
   }else if(status==='pending'&&!content){
-    body.textContent=target.level==='detail'?'生成中…':'思考中…';
+    body.textContent=target.level==='detail'?'生成中…':target.qa.revised?'正在按补充重新生成…':'思考中…';
   }else if(target.level==='detail'){
     const api=window.AnswerContent;
     if(api){
@@ -654,7 +752,7 @@ function restoreSnapshot(event){
   }finally{
     restoring=false;
     followReading=followLatest;
-    feed.scrollTop=followLatest?feed.scrollHeight:top;
+    feed.scrollTop=event.turns.length?(followLatest?feed.scrollHeight:top):0;
     $('followLatest').hidden=followLatest;
   }
 }
@@ -680,6 +778,9 @@ function connectSSE(){
       lastSequence=position.sequence;
     }
     if(t==='session_reset'){resetSession(ev.session_id);return;}
+    if(t==='capture_state'){
+      refreshState();window.dispatchEvent(new Event('workspace-recording-changed'));return;
+    }
     if(ev.session_id){
       if(currentSession===null)currentSession=ev.session_id;
       if(ev.session_id!==currentSession)return;
@@ -719,8 +820,9 @@ function connectSSE(){
         for(const sub of qa.subs.values())sub.el.remove();qa.subs.clear();
         qa.generation=ev.generation;qa.status='pending';
         qa.el.querySelector('.qbox').innerHTML=`<span class="t">${esc(ev.at||'')}</span>${md(lastQuestion)}`;
-        for(const link of $('questionList').children)if(link.dataset.turnId===ev.turn_id)link.querySelector('.nav-label').textContent=lastQuestion;
+        for(const link of $('questionList').children)if(link.dataset.turnId===ev.turn_id){link.querySelector('.nav-label').textContent=lastQuestion;link.title=lastQuestion;}
         qa.el.querySelector('.dirrow')?.remove();
+        showRevision(qa,ev);
       }
       const target={qa,box:qa.card,raw:'',level:'quick',taskId:ev.task_id,attempt:0,model:''};
       taskTargets.set(ev.task_id,target);renderAnswer(target,'','pending');

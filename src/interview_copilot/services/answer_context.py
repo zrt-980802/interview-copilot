@@ -7,29 +7,37 @@ from dataclasses import dataclass
 import json
 import math
 import re
+import time
 
 from interview_copilot.services.corpus import clip_evidence, terms
 from interview_copilot.services.answer_content import context_sources
 from interview_copilot.services.dialogue import answer_style, response_plan, relevant_evidence
+from interview_copilot.services.answer_constraints import fact_contract, reasoning_contract, requested_preferences
 
 
 class ContextBudgetExceeded(ValueError):
     pass
 
 
+def _matches_project(query, item):
+    fact = item.get("fact_check", {})
+    name = fact.get("subject") or item.get("heading", "")
+    return (item.get("kind") == "candidate_material"
+            and fact.get("field") not in {"publication_status", "period"}
+            and len(query.intersection(terms(name))) >= 2)
+
+
 def answer_scope(question, evidence, profile="", dialogue=None):
     dialogue = dialogue or {}
     style = answer_style(question)
     query = set(terms(question))
-    project = any(item.get("kind") == "candidate_material" and
-                  item.get("fact_check",{}).get("field") not in {"publication_status","period"} and
-                  len(query.intersection(terms(item.get("fact_check",{}).get("subject",item.get("heading",""))))) >= 2
-                  for item in evidence)
+    project = any(_matches_project(query, item) for item in evidence)
     personal = bool(re.search(r"本人|简历|经历|自我介绍|毕业|在读|你(?:以前|曾经|是否|有没有|已经|独立|在|负责|参与|做过)|"
                               r"[你我]的(?:项目|角色|工作|背景|职责)|你(?:主导|带领|做的|开发的|实现的|所在)|"
                               r"你.*(?:做过|负责过|上线过|参与过)|"
                               r"\b(?:my|your)\s+(?:project|experience|work|role|background|resume)\b|\b(?:have|did) you\b",question,re.I))
     personal = personal or style in {"experience", "introduction"}
+    personal = personal or bool(requested_preferences(question))
     personal = personal or (style == "hr" and bool(re.search(r"薪资|薪酬|待遇|离职|婚姻|未婚|已婚|住在哪|住哪里|通勤", question)))
     design = bool(re.search(r"假设|假如|如果(?:要|让|由)|设计(?:一个|一套)|如何设计|怎么设计|\bhow would\b|\bsuppose\b|\bdesign (?:a|an)\b",question,re.I))
     mode = "design" if design else "experience" if personal or project else "technical"
@@ -55,9 +63,27 @@ def answer_scope(question, evidence, profile="", dialogue=None):
 
 def scope_reference(question, reference):
     reference = deepcopy(reference)
-    reference["evidence"] = relevant_evidence(question, reference.get("evidence", []), reference.get("dialogue_context"))
-    scope = answer_scope(question,reference.get("evidence",[]),reference.get("candidate_profile",""),reference.get("dialogue_context"))
+    dialogue = reference.get("dialogue_context") or {}
+    evidence = relevant_evidence(question, reference.get("evidence", []), dialogue)
+    profile = reference.get("candidate_profile", "")
+    scope = answer_scope(question, evidence, profile, dialogue)
+    query = set(terms(question))
+    if scope["mode"] == "design" and not dialogue.get("project_followup"):
+        evidence = [item for item in evidence if item.get("kind") != "candidate_material"
+                    or _matches_project(query, item)]
+        named_sources = {item["source"] for item in evidence if item.get("kind") == "candidate_material"}
+        reference["candidate_facts"] = [fact for fact in reference.get("candidate_facts", [])
+                                        if fact.get("source") in named_sources]
+    elif scope["mode"] == "experience":
+        role_or_release = re.search(r"负责什么|负责哪些|独立负责|承担什么|(?:预发布|生产发布|上线).*(?:过|还是)", question)
+        asks_for_method = re.search(r"如何|怎么|怎样|为什么|做法|方案|建议", question)
+        if role_or_release and not asks_for_method and any(_matches_project(query, item) for item in evidence):
+            evidence = [item for item in evidence if item.get("kind") == "candidate_material"]
+    reference["evidence"] = evidence
+    scope["reference_policy"] = "optional_references" if evidence else "model_knowledge"
     reference["answer_scope"] = scope
+    reference["fact_contract"] = fact_contract(question, reference)
+    reference["reasoning_contract"] = reasoning_contract(question)
     if scope["mode"] in {"technical","design"}:
         reference["resume"] = ""
         if not reference.get("evidence"):
@@ -144,10 +170,12 @@ class ContextPack:
     excerpted: tuple[str, ...]
     evidence: list[dict]
     sources: list[dict]
+    preparation_ms: float = 0
 
 
 def compose_context(system: str, reference: dict, history: list[dict], *,
                     request: dict | None = None, max_chars: int = 16000) -> ContextPack:
+    started = time.perf_counter()
     reference, request = deepcopy(reference), deepcopy(request)
     history = [dict(message) for message in history if message.get("role") in {"user", "assistant"}]
     if request is None:
@@ -182,7 +210,7 @@ def compose_context(system: str, reference: dict, history: list[dict], *,
     original_chars = message_chars(messages)
     if original_chars <= max_chars:
         return ContextPack(messages, original_chars, original_chars, max_chars, (), original["evidence"],
-                           context_sources(json.loads(messages[1]["content"])))
+                           context_sources(json.loads(messages[1]["content"])), (time.perf_counter()-started)*1000)
 
     weights = {"resume": 0.20, "candidate_speech": 0.10, "evidence": 0.22, "history": 0.14,"candidate_profile":0.16,
                "jd": 0.06, "papers": 0.06, "enrichment": 0.04, "ai_quick_suggestion": 0.02}
@@ -214,7 +242,7 @@ def compose_context(system: str, reference: dict, history: list[dict], *,
         sent_chars = message_chars(messages)
         if sent_chars <= max_chars:
             return ContextPack(messages, original_chars, sent_chars, max_chars, excerpted, values["evidence"],
-                               context_sources(json.loads(messages[1]["content"])))
+                               context_sources(json.loads(messages[1]["content"])), (time.perf_counter()-started)*1000)
         for key in ("enrichment", "ai_quick_suggestion", "history", "jd", "papers", "evidence", "resume", "candidate_speech"):
             if caps[key] > 0:
                 caps[key] = max(0, caps[key] - (sent_chars - max_chars) - 32)

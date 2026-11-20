@@ -3,6 +3,11 @@ import pytest
 from interview_copilot.services.question_flow import is_non_question, looks_unfinished, is_continuation, has_question_cue, is_background
 
 
+def test_audio_check_does_not_classify_a_technical_audio_question_as_small_talk():
+    assert is_non_question("你能听清我说话吗？")
+    assert not is_non_question("如何判断用户能不能听清我说话？")
+
+
 @pytest.mark.parametrize("text", ["请稍等一下，我看一下你的简历", "请打开摄像头", "你能听到我的声音吗？",
                                   "能听见我说话吗？", "声音清楚吗？", "请等我一会儿"])
 def test_interview_operations_do_not_trigger_answers(legacy_server, text):

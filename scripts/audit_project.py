@@ -12,6 +12,7 @@ from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 from pathlib import Path
 import random
 import sqlite3
@@ -35,7 +36,7 @@ def timing(values):
     if not values:
         return {}
     return {"count": len(values), "p50": round(statistics.median(values), 2),
-            "p95": round(values[min(len(values) - 1, int(.95 * len(values)))], 2),
+            "p95": round(values[math.ceil(.95 * len(values)) - 1], 2),
             "max": round(max(values), 2)}
 
 
@@ -105,7 +106,9 @@ def answers(args):
             corpus.update_documents("synthetic", case.get("references", []))
             evidence = corpus.search(case["question"], budget=4000 if case["mode"] == "detail" else 2400)
             kwargs = {"evidence": evidence, "cancel_token": token, "on_context": contexts.append,
-                      "self_recent": case.get("candidate_speech", ""), "on_attempt": attempt}
+                      "self_recent": case.get("candidate_speech", ""), "on_attempt": attempt,
+                      "candidate_profile": case.get("candidate_profile", ""),
+                      "candidate_facts": case.get("candidate_facts", [])}
 
             def done(text):
                 result.update(content=text, status="complete")
@@ -237,6 +240,7 @@ def speech(args, *, targeted=False):
     try:
         for variant in variants:
             base, events, recognitions, errors = variant["base"], [], [], []
+            asr_timings = []
 
             def transcribe(wav):
                 result = client.transcribe_result(wav, prompt=build_hotwords())
@@ -244,6 +248,8 @@ def speech(args, *, targeted=False):
                 return result
 
             def emit(event):
+                if event['type'] == 'stt_transcript' and event.get('timings_ms'):
+                    asr_timings.append(event['timings_ms'])
                 if event["type"] == "speech_commit":
                     events.append(event)
                     pipeline.accept(event)
@@ -262,6 +268,7 @@ def speech(args, *, targeted=False):
             row = {"name": variant["name"], "expected": expected, "speaker": base.get("speaker", "interviewer"),
                    "audio_seconds": round(len(variant["audio"]) / 16000, 3), "commits": events,
                    "recognitions": recognitions, "errors": errors, "snapshot": pipeline.snapshot(),
+                   "asr_timings_ms": asr_timings,
                    "endpoint_probability": pipeline.turns.endpoint,
                    "wall_seconds": round(time.monotonic() - started, 3),
                    "cer": round(min(character_error_rate(value, text) for value in equivalents), 4) if expected else None,
@@ -280,10 +287,19 @@ def speech(args, *, targeted=False):
                               "case": row["name"], "count_ok": row["count_passed"], "cer": row["cer"]}), flush=True)
     finally:
         client.close()
+    stages = {}
+    for row in report["cases"]:
+        samples = row["asr_timings_ms"] + [
+            {key: value for key, value in event.get("timings_ms", {}).items() if key.startswith("endpoint_")}
+            for event in row["commits"]]
+        for sample in samples:
+            for key, value in sample.items():
+                stages.setdefault(key, []).append(value)
     report["summary"] = {"total": len(report["cases"]),
                          "count_passed": sum(row["count_passed"] for row in report["cases"]),
                          "coverage_passed": sum(row["coverage_passed"] for row in report["cases"]),
-                         "cer": timing([row["cer"] for row in report["cases"]])}
+                         "cer": timing([row["cer"] for row in report["cases"]]),
+                         "stages_ms": {key: timing(values) for key, values in sorted(stages.items())}}
     save(output_file, report)
 
 

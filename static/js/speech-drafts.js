@@ -6,8 +6,11 @@
   const reasons = {audio_gap:'音频存在缺口', capture_stalled:'采集暂时中断', speech_queue_full:'识别队列已满',
     recognition_failed:'转写失败', uncertain_recognition:'转写可信度较低', repetition:'疑似重复识别',
     suspected_hallucination:'疑似无关识别内容',
+    low_audio_level:'音量过低，请核对文字', distorted_audio:'音频失真，请核对文字',
+    endpoint_pending:'正在判断是否说完', endpoint_low:'尚未检测到完整结束，可继续说或核对',
+    endpoint_unavailable:'结束判断暂不可用', awaiting_transcript:'等待完整转写',
     waiting_for_completion:'尚未确认说完', invalid_speech_result:'识别结果无效', unfinished:'等待后续内容',
-    awaiting_question:'等待具体问题', editing:'编辑中'};
+    awaiting_question:'等待具体问题', editing:'编辑中', text_budget:'转写过长，请核对'};
 
   function reset() { items.clear(); root.replaceChildren(); root.hidden = true; }
   function update(event, sessionId) {
@@ -33,11 +36,15 @@
       el.querySelector('strong').textContent = speaker === 'self' ? '本人发言' : '问题草稿';
       item = {el,input,dirty:false,base:event,latest:event,sessionId};
       items.set(speaker,item); root.appendChild(el);
-      input.addEventListener('input', () => {item.dirty = true;});
+      input.addEventListener('input', () => {
+        item.dirty = true;
+        el.querySelector('[data-action="submit"]').disabled = !input.value.trim();
+      });
       el.querySelector('[data-action="refresh"]').onclick = () => {
         item.dirty = false; item.base = item.latest; input.value = item.latest.text;
         el.querySelector('[data-action="refresh"]').hidden = true;
         el.querySelector('.draft-error').textContent = '';
+        el.querySelector('[data-action="submit"]').disabled = !input.value.trim();
       };
       for (const action of ['edit','submit','discard']) el.querySelector(`[data-action="${action}"]`).onclick = async () => {
         const buttons = [...el.querySelectorAll('button')]; buttons.forEach(button => button.disabled = true);
@@ -51,7 +58,7 @@
           }
           if (items.get(speaker) === item) {el.remove(); items.delete(speaker); root.hidden = !items.size;}
         } catch (error) {el.querySelector('.draft-error').textContent = error.message;}
-        finally {buttons.forEach(button => button.disabled = false);}
+        finally {buttons.forEach(button => button.disabled = button.dataset.action === 'submit' && !input.value.trim());}
       };
       window.lucide?.createIcons();
     }
@@ -59,6 +66,11 @@
     item.el.querySelector('[role="status"]').textContent = (labels[event.state] || event.state) +
       (event.reason ? ' · ' + (reasons[event.reason] || '请核对草稿') : '');
     if (!item.dirty) {item.input.value = event.text; item.base = event;}
+    const editable = item.dirty || event.state === 'needs_review';
+    item.el.classList.toggle('requires-review', editable);
+    item.input.hidden = !editable;
+    item.el.querySelector('.draft-actions').hidden = !editable;
+    item.el.querySelector('[data-action="submit"]').disabled = !item.input.value.trim();
     item.el.querySelector('[data-action="refresh"]').hidden = !item.dirty || item.base.revision === event.revision;
     root.hidden = false;
   }

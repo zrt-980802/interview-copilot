@@ -5,6 +5,8 @@ const path = require('node:path');
 const {chromium} = require('playwright');
 
 const html = fs.readFileSync(path.join(__dirname, '../../static/index.html'), 'utf8')
+  .replace('<script src="/static/js/workspace-view.js"></script>', '<script>' +
+    fs.readFileSync(path.join(__dirname, '../../static/js/workspace-view.js'), 'utf8') + '</script>')
   .replace('<link rel="stylesheet" href="/static/app-shell.css">', '<style>' + fs.readFileSync(path.join(__dirname, '../../static/app-shell.css'), 'utf8') + '</style>')
   .replace('<link rel="stylesheet" href="/static/workspace.css">', '<style>' + fs.readFileSync(path.join(__dirname, '../../static/workspace.css'), 'utf8') + '</style>');
 let browser;
@@ -97,6 +99,41 @@ test('supplement updates the same question card and rejects old generation event
   assert.match(await page.locator('.nav-label').textContent(),/Complete protocol/);
   assert.match(await page.locator('.quickcard').textContent(),/Corrected complete answer/);
   assert.doesNotMatch(await page.locator('.qa').textContent(),/Obsolete|Old direction|late obsolete/);
+  assert.deepEqual(errors,[]);
+});
+
+test('long question navigation keeps rows separate and scrolls instead of squeezing text',async t=>{
+  const {page,errors,quick}=await fixture(t);
+  for(let index=1;index<=20;index++){
+    await quick(String(index),'long-'+index,
+      '问题'+index+'：如果上游 API 限流、下游工具失败，如何设计 Agent 的重试、幂等、可观测性和人工接管？');
+  }
+  for(const viewport of [{width:1150,height:920},{width:980,height:600},{width:1365,height:500}]){
+    await page.setViewportSize(viewport);
+    const layout=await page.locator('#questionList').evaluate(list=>({
+      scrolls:list.scrollHeight>list.clientHeight,
+      rows:[...list.children].map(row=>{
+        const box=row.getBoundingClientRect(),label=row.querySelector('.nav-label').getBoundingClientRect();
+        return {top:box.top,bottom:box.bottom,labelBottom:label.bottom};
+      })
+    }));
+    assert.equal(layout.scrolls,true);
+    for(let index=0;index<layout.rows.length;index++){
+      const row=layout.rows[index];
+      assert.ok(row.labelBottom<=row.bottom,'text must fit within its question row');
+      if(index)assert.ok(row.top>=layout.rows[index-1].bottom,'question rows must not overlap');
+    }
+    const last=page.locator('.question-link').last();
+    await last.scrollIntoViewIfNeeded();await last.click();
+    assert.equal(await last.getAttribute('aria-current'),'true');
+    assert.match(await last.getAttribute('title'),/问题20/);
+  }
+  if(process.env.INTERVIEW_SCREENSHOT_DIR){
+    fs.mkdirSync(process.env.INTERVIEW_SCREENSHOT_DIR,{recursive:true});
+    await page.setViewportSize({width:1150,height:920});
+    await page.locator('#questionList').evaluate(list=>{list.scrollTop=0;});
+    await page.screenshot({path:path.join(process.env.INTERVIEW_SCREENSHOT_DIR,'question-list-long.png'),fullPage:true});
+  }
   assert.deepEqual(errors,[]);
 });
 

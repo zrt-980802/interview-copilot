@@ -22,6 +22,34 @@ def test_repeating_transcription_is_logged_for_diagnosis_but_cannot_create_a_que
         engine.close()
 
 
+def test_legacy_extreme_low_audio_cannot_bypass_the_quality_gate():
+    events = []
+    engine = audio.AudioEngine('http://unused.invalid','test',
+        stt_client=SimpleNamespace(transcribe=lambda *args,**kwargs:'明等片的设计是什么？'),
+        audio_config=CONFIG,status_cb=lambda **event:events.append(event))
+    try:
+        engine._transcribe_segment(np.full(16000,.0005,dtype=np.float32).tobytes())
+        assert engine.stats['segments'] == 0
+        assert [event['type'] for event in events] == ['stt_rejected']
+        assert events[0]['reason'] == 'low_audio_level' and events[0]['text'] == '明等片的设计是什么？'
+    finally:
+        engine.close()
+
+
+def test_low_speech_near_noise_floor_requires_review_even_with_high_asr_confidence():
+    from interview_copilot.domain.speech import Recognition
+    from interview_copilot.services.speech_quality import audio_signal, recognition_issue
+
+    rng = np.random.default_rng(731)
+    noise = rng.normal(0, .004, 16000)
+    carrier = np.sin(np.arange(len(noise)) * .1)
+    recognition = Recognition("如何设计幂等键？")
+    buried = np.concatenate((noise + .002 * carrier, np.zeros(5000)))
+    clear = noise + .05 * carrier
+    assert recognition_issue(recognition, audio_signal(buried)) == "uncertain_recognition"
+    assert not recognition_issue(recognition, audio_signal(clear))
+
+
 def test_pre_roll_preserves_quiet_initial_syllables_before_energy_threshold(monkeypatch):
     clock = [100.0]
     quiet = np.full(1600,0.003,dtype=np.float32)

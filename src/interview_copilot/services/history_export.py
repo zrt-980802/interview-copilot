@@ -29,5 +29,10 @@ def export_session(session):
                 locator = " · L" + "-L".join(map(str, source["lines"])) if source.get("lines") else ""
                 lines.extend([f"#### 来源 {source_index}", "", fenced(source["source"] + locator), "",
                               fenced(source.get("excerpt", "")), ""])
+        for version, revision in enumerate(turn.get("revisions", []), 1):
+            lines.extend([f"### 补充前的版本 {version}", "", fenced(revision["question"]), ""])
+            if revision["answer"]:
+                label = "当时的回答" if revision["answer_status"] == "complete" else "当时已生成的片段"
+                lines.extend([f"> {label}", "", fenced(revision["answer"]), ""])
         lines.extend(["---", ""])
     return "\n".join(lines)

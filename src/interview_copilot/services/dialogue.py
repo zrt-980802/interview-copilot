@@ -15,6 +15,7 @@ _TOPICS = (
 )
 _SWITCH = re.compile(r"下一个问题|换个话题|换一道|接下来|再问(?:你)?一个|\bnext question\b", re.I)
 _DEICTIC = re.compile(r"这(?:个|块|部分|些|种|里|套)|那(?:个|块|部分)|你们|它|刚(?:才|刚)|上述|前面|上面|团队|工作量|多少人|几个人|\b(?:it|that|this|your team)\b", re.I)
+_FOLLOWUP = re.compile(r"^(?:(?:那|那么)[，, ]*如果|(?:那[，, ]*)?(?:为什么(?:要)?(?:这样|这么)|(?:你)?(?:再|继续)(?:展开|讲|说)|具体呢))")
 _EXPERIENCE = re.compile(
     r"自我介绍|简历|个人经历|你们.*(?:人|团队|分工|规模|工作量)|(?:团队|项目).*(?:几人|多少人|几个人|工作量)|"
     r"工作量|你.*(?:做过|做的|主导|带领|负责|参与|学过|用过|使用过|接手|遇到|从零|从0)|"
@@ -56,6 +57,10 @@ def response_plan(question):
     return {"focus": "只回答最后的当前问题；前文用于指代，不补答已经换掉的旧题", "max_points": 2, "body_chars": 220}
 
 
+def context_excerpt(question):
+    return question if len(question) <= 600 else question[:320] + " […] " + question[-275:]
+
+
 def question_context(question, previous=None):
     """Resolve only conversational hints; a topic is not a verified personal fact."""
     previous = previous or {}
@@ -63,24 +68,28 @@ def question_context(question, previous=None):
     # Preserve a specific project while a follow-up uses a broader term such as 图谱.
     if topic == "知识图谱项目" and "图谱" in previous.get("topic", "") and not _SWITCH.search(question):
         topic = previous["topic"]
-    inherited = not topic and bool(_DEICTIC.search(question)) and not _SWITCH.search(question)
+    linked = bool(previous and (not topic or not previous.get("topic") or topic == previous["topic"])
+                  and not _SWITCH.search(question)
+                  and (_DEICTIC.search(question) or _FOLLOWUP.match(question)))
+    inherited = linked and not topic
     if inherited:
         topic = previous.get("topic", "")
     style = answer_style(question)
     project_followup = bool(topic and re.search(r"项目|图谱|研究", topic) and
                             re.search(r"这(?:块|部分|里|个)|刚(?:才|刚)|你们|它|工作量|团队", question))
-    referent = previous.get("topic_question", "") if inherited else ""
-    if inherited and not referent:
-        referent = previous.get("question", "")
-    anchor = topic or referent
+    referent = previous.get("question", "") if linked else ""
+    root = previous.get("topic_question", "") if inherited else ""
+    anchor = topic or root or referent
     return {
         "question": question,
         "topic": topic,
-        "topic_question": (referent or question)[:500],
-        "referent_question": referent[:500],
+        "topic_question": context_excerpt(root or referent or question) if inherited else context_excerpt(question),
+        "referent_question": context_excerpt(referent),
+        "topic_question_anchor": root if root != referent else "",
         "answer_style": style,
         "project_followup": project_followup,
-        "retrieval_query": (anchor + " " + question).strip() if inherited and anchor else question,
+        "retrieval_query": " ".join(dict.fromkeys(part for part in (
+            anchor, context_excerpt(referent), question) if part)) if inherited and anchor else question,
         "note": "主题与指代是从面试官问题归纳的线索，不证明本人做过；实际发言和AI建议分开使用。",
     }
 

@@ -15,12 +15,24 @@ from interview_copilot.services.mobile_access import PairingError
 
 COOKIE = "copilot_viewer"
 _EVENT_FIELDS = {
-    "answer_start": ("question", "at"), "detail_start": ("direction", "at"),
+    "answer_start": ("question", "at", "revision_count"), "detail_start": ("direction", "at"),
     "answer_attempt": ("attempt", "model"), "answer_delta": ("attempt", "delta"),
     "answer_done": ("attempt", "full", "document"), "answer_error": ("attempt",),
     "answer_cancelled": (), "capture_state": ("capture",), "session_reset": (),
 }
 _IDENTITY = ("session_id", "turn_id", "generation", "task_id", "level")
+_SPEECH_STATES = {"empty", "committed", "collecting", "evaluating", "awaiting_transcript", "ready", "needs_review"}
+_SPEECH_REASONS = {"audio_gap", "capture_stalled", "speech_queue_full", "recognition_failed",
+                   "uncertain_recognition", "repetition", "suspected_hallucination", "low_audio_level",
+                   "distorted_audio", "endpoint_pending", "endpoint_low", "endpoint_unavailable",
+                   "awaiting_transcript", "waiting_for_completion", "invalid_speech_result", "unfinished",
+                   "awaiting_question", "editing", "text_budget"}
+
+
+def display_speech_status(draft):
+    return {"speaker": "self" if draft.get("speaker") == "self" else "interviewer",
+            "state": draft.get("state") if draft.get("state") in _SPEECH_STATES else "needs_review",
+            "reason": draft.get("reason") if draft.get("reason") in _SPEECH_REASONS else ""}
 
 
 def display_document(document):
@@ -40,6 +52,9 @@ def display_document(document):
 
 def display_event(event):
     kind = event.get("type")
+    if kind == "speech_draft":
+        return {"type": "speech_status", "event_id": event["event_id"],
+                "session_id": event.get("session_id"), **display_speech_status(event)}
     if kind not in _EVENT_FIELDS:
         return {"type": "cursor", "event_id": event["event_id"]}
     value = {key: event[key] for key in ("event_id", *_IDENTITY, *_EVENT_FIELDS[kind]) if key in event}
@@ -53,9 +68,10 @@ def display_event(event):
 
 def display_snapshot(snapshot, capture):
     value = deepcopy(snapshot)
-    value.pop("speech_drafts", None)
+    value["speech_status"] = [display_speech_status(draft) for draft in value.pop("speech_drafts", [])]
     value["capture"] = capture
     for turn in value["turns"]:
+        turn.pop("revisions", None)
         for answer in turn["answers"]:
             answer["document"] = display_document(answer.get("document"))
             answer["error"] = "回答生成失败，请在电脑端检查" if answer.get("error") else ""

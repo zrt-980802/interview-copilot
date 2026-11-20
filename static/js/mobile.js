@@ -2,6 +2,9 @@ import {draftDocument, isAnswerDocument, renderDocument} from '/assets/answer-co
 
 const $ = id => document.getElementById(id);
 const turns = new Map(), tasks = new Map();
+const speechStates = new Map();
+const renderTimings=[];
+window.ViewerPerformance={renderTimings};
 let source, session, epoch, sequence = -1, selected, following = true, renderPending = false;
 let connectionGeneration = 0, wantedAwake = false, wakeLock;
 function takePairingFragment() {
@@ -31,6 +34,7 @@ function closeStream() {
 }
 function revoke(message = '配对已失效，请重新连接') {
   closeStream(); turns.clear(); tasks.clear(); selected = session = epoch = null; sequence = -1;
+  speechStates.clear();renderSpeechStatus();
   $('answers').replaceChildren(); $('question').textContent = ''; $('turns').replaceChildren();
   $('current').hidden = true; $('empty').hidden = false;
   $('connection').textContent = '未配对'; $('pairError').textContent = message; paired(false);
@@ -44,6 +48,16 @@ function capture(value) {
   if (value.failed?.length) states.push('设备启动失败');
   $('capture').textContent = states.join('　');
 }
+function renderSpeechStatus(){
+  const labels={collecting:'正在收集',evaluating:'判断是否说完',awaiting_transcript:'等待完整转写',ready:'正在更新',needs_review:'待确认'};
+  const reasons={low_audio_level:'音量过低',distorted_audio:'音频失真',uncertain_recognition:'识别不清',
+    unfinished:'等待后续内容',awaiting_question:'等待具体问题',endpoint_low:'等待后续内容',
+    endpoint_unavailable:'结束判断暂不可用',recognition_failed:'转写失败',audio_gap:'音频存在缺口',editing:'电脑端正在编辑'};
+  const messages=[...speechStates.values()].filter(item=>labels[item.state]).map(item=>
+    (item.speaker==='self'?'本人发言':'问题')+' · '+labels[item.state]+(reasons[item.reason]?' · '+reasons[item.reason]:''));
+  $('speechStatus').textContent=messages.join('；');$('speechStatus').hidden=!messages.length;
+}
+function speechStatus(item){speechStates.set(item.speaker,item);renderSpeechStatus();}
 function selectLatest() {
   selected = [...turns.keys()].at(-1); following = true;
   $('latest').setAttribute('aria-pressed', 'true'); scheduleRender(true);
@@ -52,7 +66,15 @@ function scheduleRender(newTurn = false) {
   if (newTurn) $('reader').scrollTop = 0;
   if (renderPending) return;
   renderPending = true;
-  requestAnimationFrame(() => { renderPending = false; render(); });
+  const queued=performance.now();
+  requestAnimationFrame(() => {
+    const started=performance.now();renderPending = false;render();
+    const finished=performance.now();
+    requestAnimationFrame(()=>{
+      renderTimings.push({queue_ms:started-queued,dom_ms:finished-started,frame_ms:performance.now()-queued});
+      if(renderTimings.length>120)renderTimings.shift();
+    });
+  });
 }
 function render() {
   const reader = $('reader'), top = reader.scrollTop, turn = turns.get(selected);
@@ -65,7 +87,8 @@ function render() {
     $('question').textContent = ''; $('number').textContent = ''; $('answers').replaceChildren(); return;
   }
   $('turns').value = selected;
-  $('number').textContent = `问题 ${[...turns.keys()].indexOf(selected) + 1} / ${turns.size}`;
+  $('number').textContent = `问题 ${[...turns.keys()].indexOf(selected) + 1} / ${turns.size}`
+    + (turn.revision_count ? ' · 已补充' : '');
   $('question').textContent = turn.question;
   const openDetails = new Set([...$('answers').querySelectorAll('details.detail-answer[open]')].map(item => item.dataset.task));
   const fragment = document.createDocumentFragment();
@@ -94,6 +117,7 @@ function restore(event) {
   const changedSession = session !== event.session_id;
   if (changedSession) { following = true; $('latest').setAttribute('aria-pressed', 'true'); }
   session = event.session_id; epoch = pos.epoch; sequence = pos.sequence; turns.clear(); tasks.clear();
+  speechStates.clear();for(const item of event.speech_status||[])speechStates.set(item.speaker,item);renderSpeechStatus();
   for (const turn of event.turns) {
     turns.set(turn.turn_id, turn);
     for (const answer of turn.answers) tasks.set(answer.task_id, {turn, answer});
@@ -118,15 +142,18 @@ function apply(event) {
   if (event.type === 'capture_state') { capture(event.capture); return; }
   if (event.type === 'session_reset') {
     session = event.session_id; turns.clear(); tasks.clear(); selected = null; following = true;
+    speechStates.clear();renderSpeechStatus();
     $('latest').setAttribute('aria-pressed', 'true'); scheduleRender(true); return;
   }
   if (event.session_id !== session) return;
+  if (event.type === 'speech_status') {speechStatus(event);return;}
   if (event.type === 'answer_start') {
     const previous = turns.get(event.turn_id);
     if (previous && previous.generation >= event.generation) return;
     for (const [id,target] of tasks) if (target.turn.turn_id === event.turn_id) tasks.delete(id);
     for (const {answer} of tasks.values()) if (answer.level === 'quick' && ['pending', 'streaming'].includes(answer.status)) answer.status = 'cancelled';
-    const turn = {turn_id: event.turn_id, question: event.question, generation: event.generation, answers: []};
+    const turn = {turn_id: event.turn_id, question: event.question, generation: event.generation,
+                  revision_count: event.revision_count, answers: []};
     const answer = {task_id: event.task_id, level: 'quick', status: 'pending', content: '', attempt: 0};
     turn.answers.push(answer); turns.set(event.turn_id, turn); tasks.set(event.task_id, {turn, answer});
     if (following) { selected = event.turn_id; scheduleRender(true); } else scheduleRender();

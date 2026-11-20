@@ -60,6 +60,23 @@ async function screenshot(page, name) {
   await page.screenshot({path:path.join(process.env.INTERVIEW_SCREENSHOT_DIR, name + '.png'), fullPage:true});
 }
 
+test('phone shows pending speech state across reload without exposing draft text',{skip},async t=>{
+  const {phone,request,pair,ask,complete,errors}=await fixture(t);
+  await pair();await ask('如何避免重复消费？');await complete(1);
+  await request.post(desktopUrl+'/__regression__/speech-draft',{data:{state:'needs_review',reason:'low_audio_level',text:'草稿保密内容918'}});
+  await phone.locator('#speechStatus').filter({hasText:'待确认'}).waitFor();
+  assert.match(await phone.locator('#speechStatus').innerText(),/音量过低/);
+  assert.doesNotMatch(await phone.locator('body').innerText(),/草稿保密内容918/);
+  const snapshot=await(await request.get(phoneUrl+'/api/snapshot')).json();
+  assert.doesNotMatch(JSON.stringify(snapshot),/草稿保密内容918/);
+  await phone.reload();await phone.locator('#connection').filter({hasText:'已连接'}).waitFor();
+  await phone.locator('#speechStatus').filter({hasText:'待确认'}).waitFor();
+  await screenshot(phone,'phone-speech-pending');
+  await request.post(desktopUrl+'/__regression__/speech-draft',{data:{state:'empty',text:''}});
+  await phone.locator('#speechStatus').waitFor({state:'hidden'});
+  assert.deepEqual(errors,[]);
+});
+
 test('desktop pairing QR and phone code grant share one answer without auto recording', {skip}, async t => {
   const {context, phone, computer, request, errors, pair, ask, complete} = await fixture(t, {desktop:true});
   const started = [];
@@ -84,6 +101,15 @@ test('desktop pairing QR and phone code grant share one answer without auto reco
   const projection = await (await request.get(phoneUrl + '/api/snapshot')).json();
   assert.deepEqual(projection.turns[0].answers[0].document.sources, []);
   assert.equal(await phone.evaluate(() => window.mediaCalls), 0);
+  if (process.env.INTERVIEW_SCREENSHOT_DIR) {
+    await phone.waitForFunction(() => window.ViewerPerformance.renderTimings.length > 0);
+    const desktop = await (await request.get(desktopUrl + '/api/session/snapshot')).json();
+    const answer = desktop.turns[0].answers[0].document.timings_ms;
+    assert.ok(answer.retrieval_ms >= 0 && answer.task_to_complete_ms >= answer.task_to_first_content_ms);
+    const browser = await phone.evaluate(() => window.ViewerPerformance.renderTimings);
+    fs.writeFileSync(path.join(process.env.INTERVIEW_SCREENSHOT_DIR, 'paired-stage-timings.json'),
+      JSON.stringify({answer_ms: answer, browser_ms: browser}, null, 2));
+  }
   await screenshot(computer, 'workspace-desktop');
   await screenshot(phone, 'phone-answer');
   assert.deepEqual(errors, []);
@@ -192,17 +218,35 @@ test('speech supplement revises one shared turn on desktop phone and history', {
   await pair();
   const first='说明 Function Call 消息协议流，模型返回什么结构？';
   await request.post(desktopUrl+'/__regression__/voice',{data:{text:first}}); await complete(1);
+  const original=(await(await request.get(desktopUrl+'/api/session/snapshot')).json()).turns[0];
   await request.post(desktopUrl+'/__regression__/voice',{data:{text:'结果以什么身份回传？'}});
   await phone.locator('#question').filter({hasText:'结果以什么身份回传'}).waitFor(); await complete(1);
   assert.equal(await computer.locator('.qa').count(),1);
   assert.match(await computer.locator('.qbox').textContent(),/模型返回什么结构.*结果以什么身份回传/);
+  await computer.getByText('补充后的完整问题',{exact:true}).waitFor();
+  await phone.locator('#number').filter({hasText:'已补充'}).waitFor();
   const state=await (await request.get(desktopUrl+'/api/session/snapshot')).json();
+  assert.notEqual(state.turns[0].answers[0].task_id,original.answers[0].task_id);
   const history=await (await request.get(desktopUrl+'/api/history/session/'+state.session_id)).json();
   assert.equal(history.session.turns.length,1);
   assert.equal(history.session.turns[0].question,first+' 结果以什么身份回传？');
+  assert.deepEqual(history.session.turns[0].revisions,[{
+    question:first,answer:original.answers[0].content,answer_status:'complete'
+  }]);
+  await computer.reload();
+  const previous=computer.locator('.revision-list');
+  await previous.waitFor();
+  assert.equal(await previous.getAttribute('open'),null);
+  await previous.locator('summary').click();
+  assert.match(await previous.locator('.revision-question').innerText(),/模型返回什么结构/);
+  await computer.goto(desktopUrl+'/history?session='+state.session_id);
+  await computer.getByText('补充后的完整问题',{exact:true}).waitFor();
+  await computer.locator('.revision-list summary').click();
+  assert.match(await computer.locator('.revision-answer').innerText(),/先明确目标/);
   await phone.reload(); await phone.locator('#connection').filter({hasText:'已连接'}).waitFor();
   assert.equal(await phone.locator('#turns option').count(),1);
   assert.match(await phone.locator('#question').textContent(),/结果以什么身份回传/);
+  await phone.locator('#number').filter({hasText:'已补充'}).waitFor();
   assert.deepEqual(errors,[]);
 });
 

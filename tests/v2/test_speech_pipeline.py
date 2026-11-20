@@ -91,12 +91,57 @@ def test_cancel_and_gap_never_commit():
         assert not any(e['type'] == 'speech_commit' for e in events)
 
 
+def test_full_asr_queue_keeps_audio_gap_visible_and_blocks_submission():
+    p, jobs, events = pipeline(max_window_ms=1000, window_ms=1000)
+    submit = jobs.submit
+
+    def reject_first_window(duration_ms, work, **kwargs):
+        if not kwargs["endpoint"]:
+            raise RuntimeError("speech_queue_full")
+        return submit(duration_ms, work, **kwargs)
+
+    jobs.submit = reject_first_window
+    feed(p, 32)
+    feed(p, 300, False)
+    snapshot = p.snapshot()
+    assert (snapshot["state"], snapshot["reason"]) == ("needs_review", "speech_queue_full")
+    assert not jobs.pending
+    assert not any(event["type"] == "speech_commit" for event in events)
+    assert any(event["type"] == "speech_draft" and event["reason"] == "speech_queue_full"
+               for event in events)
+
+
 def test_invalid_results_require_review():
     p, jobs, _ = pipeline()
     feed(p, 32)
     feed(p, 60, False)
     jobs.finish(endpoint=True, value=float('nan'))
     assert p.snapshot()['state'] == 'needs_review'
+
+
+def test_extremely_quiet_recognition_is_visible_for_review_but_cannot_auto_submit():
+    p, jobs, events = pipeline()
+    p.feed(np.full(32 * 512, .0005, dtype=np.float32))
+    feed(p, 60, False)
+    jobs.finish(value=Recognition('明等片的设计和区外红区的处理是什么？'))
+    jobs.finish(endpoint=True)
+    snapshot = p.snapshot()
+    assert snapshot['state'] == 'needs_review' and snapshot['reason'] == 'low_audio_level'
+    assert snapshot['text'] == '明等片的设计和区外红区的处理是什么？'
+    assert not any(event['type'] == 'speech_commit' for event in events)
+    assert next(event for event in events if event['type'] == 'stt_transcript')['signal']['speech_db'] < -55
+
+
+def test_low_endpoint_is_rechecked_using_extended_silence_without_another_asr_window():
+    p, jobs, events = pipeline()
+    feed(p, 32)
+    feed(p, 30, False)
+    jobs.finish()
+    jobs.finish(endpoint=True, value=.1)
+    feed(p, 50, False)
+    assert len(jobs.pending) == 1 and jobs.pending[0][2]['endpoint']
+    jobs.finish(endpoint=True, value=.99)
+    assert len([event for event in events if event['type'] == 'speech_commit']) == 1
 
 
 def test_edit_hold_blocks_late_automatic_commit():

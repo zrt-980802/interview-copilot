@@ -75,3 +75,65 @@ def test_final_revision_replaces_partial_without_duplicating_text():
     proposal = turns.proposal()
     assert proposal["text"] == "介绍RAG" and turns.accept(proposal)
     assert turns.proposal() is None
+
+
+def prepared_turn(**options):
+    now = [0.0]
+    turns = TurnCoordinator(clock=lambda: now[0], **options)
+    turns.activity(True, 16000)
+    turns.register(SpeechWindow(1, 0, 16000))
+    turns.transcript(turns.draft_id, 1, Recognition('不是十万，是一百万，如何避免重复扣款？'))
+    turns.activity(False, 16000)
+    now[0] = .5
+    return turns, now
+
+
+def test_endpoint_low_score_can_be_rechecked_without_new_speech_or_stale_result():
+    turns, now = prepared_turn()
+    first = turns.endpoint_request()
+    assert turns.endpoint_request() is None
+    assert turns.endpoint_result(first, .2)
+    now[0] = 1.6
+    assert turns.endpoint_request() is None
+    now[0] = 1.8
+    second = turns.endpoint_request()
+    assert second and second != first
+    assert not turns.endpoint_result(first, .99)
+    assert turns.endpoint_result(second, .99)
+    proposal = turns.proposal()
+    assert proposal['text'] == '不是十万，是一百万，如何避免重复扣款？'
+    assert turns.accept(proposal)
+    assert turns.endpoint_request() is None
+
+
+def test_endpoint_rechecks_are_bounded_and_never_force_an_answer():
+    turns, now = prepared_turn()
+    for at in [.5, 2, 3.5]:
+        now[0] = at
+        assert turns.endpoint_result(turns.endpoint_request(), .1)
+    now[0] = 20
+    assert turns.endpoint_request() is None
+    assert turns.proposal() is None
+    assert turns.snapshot()['reason'] == 'endpoint_low'
+
+
+@pytest.mark.parametrize('text,reason', [('如果有三个数据库，那么', 'unfinished'),
+                                      ('订单服务和库存服务使用两个数据库', 'awaiting_question')])
+def test_review_reason_keeps_the_actual_blocker(text, reason):
+    turns, now = prepared_turn(require_question=True)
+    turns.transcript(turns.draft_id, 1, Recognition(text), revision=1)
+    turns.endpoint_result(turns.endpoint_request(), .99)
+    now[0] = 10
+    assert turns.snapshot()['state'] == 'needs_review'
+    assert turns.snapshot()['reason'] == reason
+
+
+def test_late_but_complete_transcript_can_resolve_waiting_without_a_forced_timeout_answer():
+    turns, now = prepared_turn()
+    turns.ledger.entries[1].final = False
+    turns.endpoint_result(turns.endpoint_request(), .99)
+    now[0] = 10
+    assert turns.snapshot()['reason'] == 'awaiting_transcript'
+    assert turns.snapshot()['state'] == 'needs_review'
+    turns.transcript(turns.draft_id, 1, Recognition('如何避免重复扣款？'), revision=1)
+    assert turns.proposal()['text'] == '如何避免重复扣款？'

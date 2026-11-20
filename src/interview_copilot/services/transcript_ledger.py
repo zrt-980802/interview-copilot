@@ -1,10 +1,9 @@
 """Ordered, revision-aware ASR coverage for one question draft."""
 
 from dataclasses import dataclass
-import re
 
 from interview_copilot.domain.speech import Recognition, SpeechWindow
-from interview_copilot.services.question_flow import is_repetitive_text
+from interview_copilot.services.speech_quality import recognition_issue
 
 
 @dataclass
@@ -29,7 +28,7 @@ class TranscriptLedger:
             self.gap = "audio_gap"
         self.entries[window.seq] = _Entry(window)
 
-    def update(self, seq, result, *, revision=0, final=True):
+    def update(self, seq, result, *, revision=0, final=True, signal=None):
         if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
             raise ValueError("invalid transcript revision")
         entry = self.entries.get(seq)
@@ -38,15 +37,7 @@ class TranscriptLedger:
         if not isinstance(result, Recognition):
             raise ValueError("invalid recognition")
         entry.revision, entry.final, entry.result, entry.error = revision, bool(final), result, ""
-        if is_repetitive_text(result.text):
-            entry.error = "repetition"
-        elif re.search(r"请不吝点赞|明镜与点点|字幕由.{0,20}(?:提供|制作)|感谢(?:收看|观看).{0,16}(?:订阅|点赞)", result.text):
-            entry.error = "suspected_hallucination"
-        elif any((s.no_speech_prob or 0) > 0.75 and s.avg_logprob is not None and s.avg_logprob < -1.0
-                 for s in result.segments):
-            entry.error = "uncertain_recognition"
-        elif any(s.avg_logprob is not None and s.avg_logprob < -1.5 for s in result.segments):
-            entry.error = "uncertain_recognition"
+        entry.error = recognition_issue(result, signal)
         return True
 
     def fail(self, seq, reason):
@@ -56,6 +47,10 @@ class TranscriptLedger:
     @property
     def text(self):
         return " ".join(e.result.text for e in self.ordered() if e.result and not e.error).strip()
+
+    @property
+    def raw_text(self):
+        return " ".join(e.result.text for e in self.ordered() if e.result).strip()
 
     def ordered(self):
         return sorted(self.entries.values(), key=lambda e: e.window.start_sample)

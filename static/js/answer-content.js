@@ -115,6 +115,28 @@ function linkCitations(body, citations, panel, compact) {
   }
 }
 
+export function renderRevisions(container, revisions) {
+  container.hidden = !revisions.length;
+  if (!revisions.length) return;
+  const list = node('details', 'revision-list');
+  list.open = !!container.querySelector('.revision-list[open]');
+  list.append(node('summary', '', `补充前的版本（${revisions.length}）`));
+  revisions.forEach((revision, index) => {
+    const section = node('section', 'revision-entry');
+    section.append(node('div', 'revision-caption', `版本 ${index + 1} · 已被替换`),
+      node('p', 'revision-question', revision.question));
+    if (revision.answer) {
+      section.append(node('div', 'revision-caption',
+        revision.answer_status === 'complete' ? '当时的回答' : '当时已生成的片段'));
+      const body = node('div', 'revision-answer');
+      renderDocument(body, draftDocument(revision.answer, 'quick'));
+      section.append(body);
+    }
+    list.append(section);
+  });
+  container.replaceChildren(list);
+}
+
 export function renderDocument(container, value, {compact = false} = {}) {
   const openSources = [...container.querySelectorAll('.source-item[open]')].map(item => item.dataset.sourceIndex);
   const sourceRootOpen = !!container.querySelector('.answer-sources[open]');

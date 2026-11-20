@@ -1,0 +1,20 @@
+{
+  "documents": [
+    {"id":"schema","source":"schema.md","title":"工具调用规范","text":"# 工具调用参数\nFunction Call 使用 JSON Schema 声明参数类型和必填字段。应用执行前必须校验参数，不应直接信任模型返回的值。"},
+    {"id":"noisy-title","source":"diagram.md","title":"Gephi-SK","text":"# 图谱绘制\nGephi-SK 用于制图和导出布局，交互菜单支持拖动节点。"},
+    {"id":"order","source":"portfolio.md","title":"订单服务项目","kind":"candidate_material","text":"# 订单服务项目\n本人承担订单接口开发和异常状态排查，没有独立负责支付链路。本项目在预发布验证。"},
+    {"id":"payment","source":"payment.md","title":"支付链路实践笔记","text":"# 支付链路\n支付链路在生产上可以用回调补偿和账单对账。支付超时，需要查询交易状态后再决定要不要重试。"},
+    {"id":"embedding","source":"vector.md","title":"向量检索笔记","text":"# 向量检索\nembedding 将文本转为向量，用近邻搜索找出语义相近的片段。"},
+    {"id":"release","source":"release.md","title":"订单服务项目发布说明","text":"# 发布环境\n预发布验证与生产发布是两个阶段。生产发布需要通过发布审批。该说明是通用流程。"}
+  ],
+  "cases": [
+    {"id":"R01","kind":"exact","question":"Function Call 的 JSON Schema 怎么声明必填字段？","expected":["schema.md"],"relevant":["schema.md"],"scope":"technical"},
+    {"id":"R02","kind":"paraphrase","question":"嵌入如何找语义相近的片段？","expected":["vector.md"],"relevant":["vector.md"],"scope":"technical"},
+    {"id":"R03","kind":"noisy_name","question":"Gephi-SK 的 Function Call 参数怎么校验，schema 怎么声明？","expected":["schema.md"],"relevant":["schema.md"],"scope":"technical"},
+    {"id":"R04","kind":"uncovered","question":"彗星近日点和远日点的轨道速度有什么区别？","expected":[],"relevant":[],"scope":"technical"},
+    {"id":"R05","kind":"personal_vs_reference","question":"你在订单服务项目负责什么？有没有独立负责支付链路？","expected":["portfolio.md"],"relevant":["portfolio.md"],"scope":"experience","personal_sources":["portfolio.md"]},
+    {"id":"R06","kind":"design_vs_experience","question":"假设要设计支付链路对账，支付超时如何查询交易状态并重试？","expected":["payment.md"],"relevant":["payment.md"],"scope":"design"},
+    {"id":"R07","kind":"release_status","question":"你做的订单服务项目在预发布验证过，还是已经生产发布？","expected":["portfolio.md"],"relevant":["portfolio.md","release.md"],"scope":"experience","personal_sources":["portfolio.md"]},
+    {"id":"R08","kind":"precise_title","question":"Gephi-SK 如何导出布局？","expected":["diagram.md"],"relevant":["diagram.md"],"scope":"technical"}
+  ]
+}

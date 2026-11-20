@@ -40,6 +40,10 @@ for (const width of [1365,390]) test(`local recording review, playback and corre
   }
   const exported = await (await context.request.get(base + await section.getByRole('link',{name:'导出转写与对照'}).getAttribute('href'))).json();
   assert.ok(exported.transcript.segments.some(s=>s.reviewed_text==='人工核对：库存不能超卖。'));
+  if(process.env.INTERVIEW_SCREENSHOT_DIR && width === 1365){
+    fs.writeFileSync(path.join(process.env.INTERVIEW_SCREENSHOT_DIR,'synthetic-recording-export.json'),
+      JSON.stringify(exported,null,2));
+  }
   assert.deepEqual(errors,[]);
 });
 

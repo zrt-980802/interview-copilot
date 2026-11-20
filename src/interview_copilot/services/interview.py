@@ -6,13 +6,14 @@ from dataclasses import dataclass, field
 from copy import deepcopy
 import threading
 import time
+import math
 from uuid import uuid4
 
 from interview_copilot.domain.models import Question, SessionId, TurnId
 from interview_copilot.domain.session import SessionState
 from interview_copilot.services.cancellation import CancellationToken
-from interview_copilot.services.answer_content import parse_answer
-from interview_copilot.services.dialogue import question_context
+from interview_copilot.services.answer_content import ANSWER_TIMING_FIELDS, parse_answer
+from interview_copilot.services.dialogue import context_excerpt, question_context
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +51,13 @@ class TurnSnapshot:
     at: str
     answers: tuple[AnswerSnapshot, ...]
     dialogue: dict = field(default_factory=dict)
+    revisions: tuple[dict, ...] = ()
+
+    def revision_record(self) -> dict:
+        quick = next((answer for answer in self.answers if answer.kind == "quick"), None)
+        return {"question": self.question,
+                "answer": quick.content if quick else self.quick,
+                "answer_status": quick.status if quick else "pending"}
 
 
 @dataclass
@@ -61,12 +69,15 @@ class _Answer:
     attempt: int = 0
     model: str = ""
     sources: list[dict] = field(default_factory=list)
+    timings: dict[str, float] = field(default_factory=dict)
 
     def snapshot(self) -> AnswerSnapshot:
+        document = parse_answer(self.content, self.context.kind, self.sources, complete=self.status == "complete")
+        if self.timings:
+            document['timings_ms'] = dict(self.timings)
         return AnswerSnapshot(self.context.task_id, self.context.kind, self.context.key,
                               self.content, self.status, self.error, self.attempt, self.model,
-                              parse_answer(self.content, self.context.kind, self.sources,
-                                           complete=self.status == "complete"))
+                              document)
 
 
 @dataclass
@@ -81,6 +92,7 @@ class _Turn:
     answers: dict[tuple[str, str], _Answer] = field(default_factory=dict)
     dialogue: dict = field(default_factory=dict)
     candidate_speech: str = ""
+    revisions: tuple[dict, ...] = ()
 
 
 @dataclass
@@ -161,6 +173,7 @@ class SessionManager:
             session = self._sessions[session_id]
             if session.state.active_turn_id != turn_id:
                 raise ValueError("only the active turn can be revised")
+            archived = self.turn(session_id, turn_id).revision_record()
             for task in session.state.task_registry.values():
                 if task.context.turn_id == turn_id:
                     self._cancel_task(session,task)
@@ -170,7 +183,8 @@ class SessionManager:
             dialogue = question_context(question.strip(), earlier[-1].dialogue if earlier else None)
             dialogue["interviewer_background"] = list(previous.dialogue.get("interviewer_background", []))
             session.turns[turn_id] = _Turn(question.strip(),generation,at=previous.at,
-                                         dialogue=dialogue,candidate_speech=previous.candidate_speech)
+                                         dialogue=dialogue,candidate_speech=previous.candidate_speech,
+                                         revisions=previous.revisions + (archived,))
             return self.start_task(session_id,turn_id,"quick")
 
     def note_background(self, session_id: SessionId, text: str) -> None:
@@ -200,6 +214,7 @@ class SessionManager:
                     break
                 if previous.candidate_speech:
                     speech.append({"turn_id": turn_id.value, "kind": "candidate_self_report",
+                                   "question": context_excerpt(previous.question),
                                    "text": previous.candidate_speech[-600:],
                                    "partial": len(previous.candidate_speech) > 600})
                 if turn_id == context.turn_id:
@@ -254,6 +269,19 @@ class SessionManager:
                 return False
             answer.attempt, answer.model = attempt, model
             answer.content, answer.error, answer.status = "", "", "pending"
+            for name in ('generation_first_content_ms', 'generation_total_ms'):
+                answer.timings.pop(name, None)
+            return True
+
+    def record_timing(self, context: TaskContext, name: str, milliseconds: float, *, first=False) -> bool:
+        if name not in ANSWER_TIMING_FIELDS or type(milliseconds) not in (int, float) or not math.isfinite(milliseconds) or milliseconds < 0:
+            raise ValueError('invalid answer timing')
+        with self._lock:
+            if self._active_task(context) is None or context.kind == 'enrichment':
+                return False
+            answer = self._sessions[context.session_id].turns[context.turn_id].answers[(context.kind, context.key)]
+            if not first or name not in answer.timings:
+                answer.timings[name] = round(milliseconds, 3)
             return True
 
     def set_sources(self, context: TaskContext, sources: list[dict]) -> bool:
@@ -278,8 +306,11 @@ class SessionManager:
             if self._active_task(context) is None or context.kind == "enrichment":
                 return None
             answer = self._sessions[context.session_id].turns[context.turn_id].answers[(context.kind, context.key)]
+            document = parse_answer(content, context.kind, answer.sources)
+            if answer.timings:
+                document['timings_ms'] = dict(answer.timings)
             return AnswerSnapshot(context.task_id, context.kind, context.key, content, "complete", "",
-                                  answer.attempt, answer.model, parse_answer(content, context.kind, answer.sources))
+                                  answer.attempt, answer.model, document)
 
     def finish(self, context: TaskContext, content: str) -> bool:
         with self._lock:
@@ -350,7 +381,7 @@ class SessionManager:
             return TurnSnapshot(turn_id, turn.generation, turn.question, turn.quick,
                                 tuple(turn.details.items()), turn.enrichment, turn.status,
                                 turn.at, tuple(answer.snapshot() for answer in turn.answers.values()),
-                                deepcopy(turn.dialogue))
+                                deepcopy(turn.dialogue), deepcopy(turn.revisions))
 
     def active_turn(self, session_id: SessionId) -> TurnSnapshot | None:
         with self._lock:
@@ -371,6 +402,8 @@ class SessionManager:
                 if turn_id == context.turn_id:
                     result.append(("user", turn.question))
                     break
-                if turn.quick:
-                    result.extend((("user", turn.question), ("assistant", turn.quick)))
+                if turn.quick or turn.revisions:
+                    result.append(("user", turn.question))
+                    if turn.quick:
+                        result.append(("assistant", turn.quick))
             return tuple(result)

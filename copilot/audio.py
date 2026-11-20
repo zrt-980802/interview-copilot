@@ -30,7 +30,8 @@ import numpy as np
 import pyaudiowpatch as pw
 
 from copilot.hotwords import build_hotwords  # noqa: E402
-from interview_copilot.services.question_flow import is_repetitive_text
+from interview_copilot.services.speech_quality import audio_signal, recognition_issue
+from interview_copilot.domain.speech import Recognition
 from copilot.stt import STTClient  # noqa: E402
 
 
@@ -768,13 +769,19 @@ class AudioEngine:
             if self._stop_flag.is_set() or segment_generation != self._generation:
                 return
             try:
-                text = self._stt.transcribe(wav_bytes, prompt=prompt, language="zh")
+                if hasattr(self._stt, "transcribe_result"):
+                    result = self._stt.transcribe_result(wav_bytes, prompt=prompt, language="zh")
+                else:
+                    result = Recognition(self._stt.transcribe(wav_bytes, prompt=prompt, language="zh"))
+                text = result.text
                 if self._stop_flag.is_set() or segment_generation != self._generation:
                     return
                 if text:
-                    if is_repetitive_text(text):
-                        self.stats["rejected_repetition"] = self.stats.get("rejected_repetition",0) + 1
-                        self.status_cb(type="stt_rejected",reason="repetition",text=text[:320],speaker=self.speaker_tag)
+                    signal = audio_signal(samples)
+                    issue = recognition_issue(result, signal)
+                    if issue:
+                        self.stats["rejected_" + issue] = self.stats.get("rejected_" + issue,0) + 1
+                        self.status_cb(type="stt_rejected",reason=issue,text=text[:320],speaker=self.speaker_tag,signal=signal)
                         return
                     self.stats["segments"] += 1
                     self.status_cb(type="question", text=text,

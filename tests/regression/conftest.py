@@ -100,7 +100,7 @@ class FakeHistory:
     def turn_finish(self, turn_id, answer, latency=0, **kwargs):
         self.writes.append(("quick", turn_id, answer))
 
-    def turn_revise(self,turn_id,question):
+    def turn_revise(self,turn_id,question,*,previous=None):
         self.writes.append(("revise",turn_id,question))
 
     def detail_add(self, turn_id, direction, answer, **kwargs):

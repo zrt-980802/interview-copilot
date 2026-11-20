@@ -3,11 +3,16 @@ html,body{height:100%;height:100dvh}
 .capture-panel{padding:16px 24px 12px;background:#191c1e;border-bottom:1px solid var(--line);flex-shrink:0;container-type:inline-size}
 .capture-heading{display:flex;align-items:center;gap:16px;margin-bottom:12px}
 .capture-heading h2{font-size:13px;font-weight:600;margin:0}
-.capture-heading #btnRefreshDevices{margin-left:auto;min-height:32px;padding:5px 8px;font-size:11px}
+.capture-heading h2{flex-shrink:0}
+.capture-heading-actions{margin-left:auto;display:flex;gap:6px;flex-shrink:0}
+.capture-heading #btnRefreshDevices{min-height:32px;padding:5px 8px;font-size:11px}
+.capture-heading .capture-icon{width:32px;height:32px;min-height:32px;padding:0;justify-content:center}
+.capture-icon[hidden],#captureSettings[hidden],.capture-panel.is-collapsed #btnRefreshDevices{display:none}
+.capture-panel.is-collapsed .capture-heading{margin-bottom:0}
 .device-control small{display:block;min-height:16px;font-size:10px;line-height:1.6;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 #captureNotice{font-size:12px;line-height:1.6;color:var(--green);margin-top:10px;overflow-wrap:anywhere;max-height:80px;overflow:auto}
 #captureNotice.error{color:var(--red)}
-.capture-status{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:var(--dim)}
+.capture-status{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:var(--dim);min-width:0;overflow-wrap:anywhere}
 #stateDot{width:7px;height:7px;box-shadow:none}
 .capture-controls{display:grid;grid-template-columns:minmax(170px,1fr) minmax(170px,1fr) auto;gap:14px;align-items:end;max-width:1200px}
 .device-control{display:flex;flex-direction:column;gap:7px;min-width:0}
@@ -30,9 +35,9 @@ html,body{height:100%;height:100dvh}
 .question-nav{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;padding:20px 12px;background:#191c1f}
 .nav-heading{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--dim);padding:0 8px 16px}
 .nav-heading span:last-child{font-variant-numeric:tabular-nums}
-#questionList{overflow:auto;min-height:0;display:flex;flex-direction:column;gap:4px}
+#questionList{flex:1;overflow:auto;min-height:0;display:flex;flex-direction:column;gap:4px;scrollbar-gutter:stable}
 #questionList:empty::after{content:'暂无题目';padding:8px;color:#77818a;font-size:12px}
-.question-link{display:block;width:100%;padding:12px 10px;text-align:left;background:none;border:1px solid transparent;border-radius:4px;font-size:13px;line-height:1.65;overflow-wrap:anywhere;white-space:normal;min-height:44px}
+.question-link{display:block;flex:0 0 auto;min-width:0;width:100%;padding:12px 10px;text-align:left;background:none;border:1px solid transparent;border-radius:4px;font-size:13px;line-height:1.65;overflow-wrap:anywhere;white-space:normal;min-height:44px}
 .question-link[aria-current=true]{background:#26332f;border-color:#3f6254;color:#bce8d8}
 .question-link .nav-index{display:block;color:var(--dim);font-size:11px;margin-bottom:4px}
 .question-link .nav-label{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
@@ -77,7 +82,7 @@ dialog::backdrop{background:#05080bbf}dialog h2{font-size:18px;margin:0 0 18px}
 #kbPanel{border-radius:8px}#kbOverlay{padding-top:24px}.kbrow{border-radius:4px}
 @media(max-width:1000px){.capture-panel{padding:14px 18px 12px}.session-toolbar{padding:14px 18px}.capture-controls{gap:10px}.capture-commands{gap:6px}.workspace{grid-template-columns:180px minmax(0,1fr)}#resumeBadge{max-width:160px}}
 @media(max-width:760px){
-  .capture-panel{padding:12px}.capture-heading{margin-bottom:10px}
+  .capture-panel{padding:12px}.capture-heading{margin-bottom:10px;gap:10px}
   .capture-controls{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
   .device-control>span{font-size:10px}.device-control select{font-size:11px;padding:7px 6px}
   .capture-commands{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr auto}
@@ -94,5 +99,52 @@ dialog::backdrop{background:#05080bbf}dialog h2{font-size:18px;margin:0 0 18px}
   .manual-field{grid-column:1/-1;grid-row:2}.manual-composer>label{font-size:11px}#connectionState{font-size:10px}
   #kbPanel{padding:16px 12px}.kbrow{align-items:flex-start;flex-wrap:wrap}.kbrow .nm{flex:1 1 140px;white-space:normal;overflow-wrap:anywhere}.kbrow .meta{white-space:normal}.cnt{min-width:0;overflow-wrap:anywhere}
 }
-@media(max-height:600px) and (min-width:761px){.capture-panel{padding-top:8px;padding-bottom:8px}.capture-heading,#levelWrap.capture-levels{display:none}.session-toolbar{padding-top:8px;padding-bottom:8px}}
+@media(max-height:600px) and (min-width:761px){.capture-panel{padding-top:8px;padding-bottom:8px}#levelWrap.capture-levels{display:none}.session-toolbar{padding-top:8px;padding-bottom:8px}}
 @container(max-width:760px){.capture-controls{grid-template-columns:repeat(2,minmax(0,1fr))}.capture-commands{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr auto}}
+.workspace-views{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--line);border-radius:6px;margin-inline-start:auto;flex:0 0 auto}
+.workspace-views button{display:inline-flex;align-items:center;justify-content:center;gap:6px;background:none;border:1px solid transparent;border-radius:4px;color:var(--dim);min-height:30px;padding:4px 8px;font-size:12px;cursor:pointer}
+.workspace-views button[aria-pressed=true]{background:#26332f;border-color:#3f6254;color:var(--green)}
+.workspace-views svg{width:14px;height:14px;stroke-width:1.7;flex-shrink:0}
+.workspace-page .app-header .preview-mark{margin-left:0}
+.workspace-page[data-workspace-view=focus] .app-nav,
+.workspace-page[data-workspace-view=focus] #resumeBadge,
+.workspace-page[data-workspace-view=focus] #btnResume,
+.workspace-page[data-workspace-view=focus] #btnClear{display:none}
+.workspace-page[data-workspace-view=focus] .session-toolbar{padding-block:8px}
+.workspace:has(.question-nav[hidden]){grid-template-columns:minmax(0,1fr)}
+.session-commands{flex-wrap:wrap;flex-shrink:1;min-width:0}
+.session-commands #recordingState{font-size:11px;overflow-wrap:anywhere;align-self:center}
+#preparation{max-width:850px;padding:0 0 16px;margin:0 auto 12px;border-bottom:1px solid var(--line)}
+#preparation h2{font-size:16px;font-weight:600;margin:0 0 10px}
+.preparation-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;gap:12px 20px}
+.preparation-list div{min-width:0}
+.preparation-list dt{font-size:11px;color:var(--green);font-weight:600;margin-bottom:4px}
+.preparation-list dt a{color:inherit;text-underline-offset:3px}
+.preparation-list dd{color:var(--fg);font-size:12px;line-height:1.55;margin:0;overflow-wrap:anywhere}
+.capture-issue{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;padding:6px 14px;background:#312427;border-bottom:1px solid #623d42;color:var(--red);font-size:12px}
+.capture-issue .command{min-height:30px;font-size:11px;padding:4px 8px;margin-inline-start:auto}
+.capture-issue .command svg{width:14px;height:14px}
+.capture-signal{color:var(--dim);font-size:11px;line-height:1.4}
+.reader .speech-drafts{max-height:min(200px,30dvh);flex-shrink:0}
+@media(max-width:760px){
+  .workspace-page .app-header{column-gap:8px}
+  .capture-signal{order:3;flex-basis:100%}
+  .capture-heading:has(.capture-signal:not([hidden])){flex-wrap:wrap;row-gap:4px}
+  .workspace-page[data-workspace-view=focus] .app-header{padding-bottom:8px}
+  .workspace-page[data-workspace-view=focus] .session-commands{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .workspace-views button{gap:4px;padding-inline:6px}
+  .app-header .preview-mark{margin-left:0}
+  .session-commands #recordingState{grid-column:1/-1;min-height:14px}
+  .session-commands .command{white-space:normal;min-width:0}
+  .workspace:has(.question-nav:not([hidden])){grid-template-rows:auto minmax(135px,1fr)}
+  .question-nav:not([hidden]){display:flex;max-height:150px;border-right:0;border-bottom:1px solid var(--line);padding:8px 12px}
+  .question-nav:not([hidden]) .nav-heading{padding-bottom:5px}
+  .workspace:has(.question-nav:not([hidden])){min-height:275px}
+  .question-link{padding:5px 8px;min-height:36px}
+  .question-link .nav-index{margin-bottom:1px}
+  .question-link .nav-label{-webkit-line-clamp:2}
+  .preparation-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 12px}
+}
+@media(max-width:360px) and (min-height:600px){
+  .workspace:not(:has(.question-nav:not([hidden]),.speech-drafts:not([hidden]),.capture-issue:not([hidden]))){min-height:112px}
+}

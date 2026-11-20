@@ -4,13 +4,14 @@ from contextlib import closing
 from copy import deepcopy
 from pathlib import Path
 import json
+import math
 import queue
 import sqlite3
 import threading
 import time
 from uuid import uuid4
 
-from interview_copilot.services.answer_content import parse_answer
+from interview_copilot.services.answer_content import ANSWER_TIMING_FIELDS, parse_answer
 
 
 class HistoryError(RuntimeError):
@@ -36,6 +37,10 @@ CREATE TABLE IF NOT EXISTS answer_documents(
  detail_id INTEGER NOT NULL DEFAULT 0, document_json TEXT NOT NULL,
  task_id TEXT NOT NULL, attempt INTEGER NOT NULL, model TEXT NOT NULL,
  PRIMARY KEY(turn_id,level,detail_id));
+CREATE TABLE IF NOT EXISTS turn_revisions(
+ id INTEGER PRIMARY KEY, turn_id INTEGER NOT NULL REFERENCES turns(id),
+ question TEXT NOT NULL, answer TEXT NOT NULL, answer_status TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_turn_revisions_turn ON turn_revisions(turn_id);
 """
 
 
@@ -113,6 +118,12 @@ class _Writer(threading.Thread):
                                  (data["quick_card"], data["quick_ms"], data["turn_id"]))
                     _Writer._document(conn, data, "quick")
                 elif kind == "turn_revise":
+                    prior = data.get("previous") or {}
+                    conn.execute("""INSERT INTO turn_revisions(turn_id,question,answer,answer_status)
+                                  SELECT id,question,coalesce(?,quick_card,''),
+                                  coalesce(?,CASE WHEN quick_card IS NULL THEN 'pending' ELSE 'complete' END)
+                                  FROM turns WHERE id=?""",
+                                 (prior.get("answer"), prior.get("answer_status"), data["turn_id"]))
                     conn.execute("UPDATE turns SET question=?,quick_card=NULL,quick_ms=NULL WHERE id=?",
                                  (data["question"],data["turn_id"]))
                     conn.execute("DELETE FROM details WHERE turn_id=?",(data["turn_id"],))
@@ -249,9 +260,9 @@ class HistoryStore:
             self._submit("turn_quick", {"turn_id": turn_id, "quick_card": quick_card, "quick_ms": round(quick_ms, 0),
                                         **self._record(document, task_id, attempt, model)})
 
-    def turn_revise(self, turn_id, question):
+    def turn_revise(self, turn_id, question, *, previous=None):
         if turn_id is not None:
-            self._submit("turn_revise",{"turn_id":turn_id,"question":question},wait=True)
+            self._submit("turn_revise", {"turn_id": turn_id, "question": question, "previous": previous}, wait=True)
 
     def detail_add(self, turn_id, direction, content, *, document=None, task_id="", attempt=0, model=""):
         if turn_id is not None:
@@ -340,6 +351,13 @@ class HistoryStore:
                             or any(type(line) is not int for line in lines) or not 1 <= lines[0] <= lines[1]):
                         return result
             result["document"] = parse_answer(content or "", level, saved["sources"])
+            timings = saved.get("timings_ms")
+            if isinstance(timings, dict):
+                valid_timings = {key: value for key, value in timings.items()
+                                 if key in ANSWER_TIMING_FIELDS and type(value) in (int, float)
+                                 and 0 <= value <= 1e12 and math.isfinite(value)}
+                if valid_timings:
+                    result["document"]["timings_ms"] = valid_timings
             result["document_status"] = "stored"
         except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
             pass
@@ -361,6 +379,12 @@ class HistoryStore:
             for did, tid, direction, content, ts in detail_rows:
                 by_turn.setdefault(tid, []).append({"id": did, "direction": direction, "content": content, "ts": ts,
                                                    **self._restore_record(documents.get((tid, "detail", did)), content, "detail")})
+            revisions = {}
+            for tid, question, answer, status in conn.execute("""
+                SELECT r.turn_id,r.question,r.answer,r.answer_status FROM turn_revisions r
+                JOIN turns t ON r.turn_id=t.id WHERE t.session_id=? ORDER BY r.id
+            """, (sid,)):
+                revisions.setdefault(tid, []).append({"question": question, "answer": answer, "answer_status": status})
             turns = []
             for tid, ts, question, context, quick, ms in conn.execute(
                     "SELECT id,ts,question,self_context,quick_card,quick_ms FROM turns WHERE session_id=? ORDER BY id", (sid,)).fetchall():
@@ -368,5 +392,5 @@ class HistoryStore:
                 turns.append({"id": tid, "ts": ts, "question": question, "self_context": context,
                               "quick_card": quick, "quick_ms": ms, "details": by_turn.get(tid, []),
                               "quick_document": record["document"], "quick_document_status": record["document_status"],
-                              "quick_meta": record["meta"]})
+                              "quick_meta": record["meta"], "revisions": revisions.get(tid, [])})
         return {"id": row[0], "started_at": row[1], "title": row[2], "end_at": row[3], "turns": turns}

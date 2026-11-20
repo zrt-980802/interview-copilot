@@ -25,6 +25,13 @@ def _link_open(tokens, index, options, env):
 _MARKDOWN.renderer.rules["link_open"] = _link_open
 
 
+ANSWER_TIMING_FIELDS = frozenset({
+    "answer_queue_ms", "retrieval_ms", "enrichment_ms", "context_pack_ms",
+    "generation_first_content_ms", "generation_total_ms",
+    "task_to_first_content_ms", "task_to_complete_ms",
+})
+
+
 def context_sources(reference: dict) -> list[dict]:
     sources = []
     for field, kind in (("resume", "candidate_material"), ("candidate_speech", "candidate_speech"),
@@ -42,12 +49,20 @@ def context_sources(reference: dict) -> list[dict]:
     if dialogue.get("referent_question"):
         conversation.append("前文问题：" + dialogue["referent_question"])
     conversation.extend("面试官口头说明：" + text for text in dialogue.get("interviewer_background", []))
-    conversation.extend("本人语音自述（未经核实）：" + item["text"] for item in dialogue.get("candidate_turns", []))
+    for item in dialogue.get("candidate_turns", []):
+        if item.get("question"):
+            conversation.append("对应问题：" + item["question"])
+        conversation.append("本人语音自述（未经核实）：" + item["text"])
     if conversation:
         sources.append({"id": "context:dialogue", "source": "context:dialogue", "kind": "reference",
                         "heading": "对话线索（非已确认经历）",
                         "excerpt": "\n".join(conversation)})
     sources.extend(deepcopy(reference.get("evidence", [])))
+    for fact in reference.get("candidate_facts", []):
+        if fact.get("quote") and fact.get("source"):
+            sources.append({"id": "fact:" + fact["id"], "source": fact["source"],
+                            "kind": "candidate_material" if fact["state"] in {"confirmed", "source_supported"} else "review_constraints",
+                            "heading": fact.get("subject", ""), "excerpt": fact["quote"], "lines": fact["lines"]})
     return sources
 
 

@@ -428,6 +428,8 @@ def _storage_turn(context: TaskContext):
 def _callbacks(context: TaskContext, started: float):
     rt, sessions, store = _RUNTIME, SESSIONS, history_store
     attempt = {"number": 0}
+    task_started = time.perf_counter()
+    attempt_started = [task_started]
 
     def active():
         return _RUNTIME is rt and rt.ready
@@ -436,6 +438,10 @@ def _callbacks(context: TaskContext, started: float):
         with _INTERVIEW_LOCK:
             if not active() or not sessions.append_delta(context, delta):
                 raise StreamCancelled("cancelled")
+            if delta:
+                now = time.perf_counter()
+                sessions.record_timing(context, 'task_to_first_content_ms', (now-task_started)*1000, first=True)
+                sessions.record_timing(context, 'generation_first_content_ms', (now-attempt_started[0])*1000, first=True)
             broadcast(_task_event(context, "answer_delta", delta=delta, attempt=attempt["number"]))
 
     def on_done(full):
@@ -443,13 +449,16 @@ def _callbacks(context: TaskContext, started: float):
             if not active() or not sessions.is_active(context):
                 return
             turn_id = _storage_turn(context)
+            now = time.perf_counter()
+            sessions.record_timing(context, 'generation_total_ms', (now-attempt_started[0])*1000)
+            sessions.record_timing(context, 'task_to_complete_ms', (now-task_started)*1000)
             completion = sessions.completion_snapshot(context, full)
             if completion is None:
                 return
             record = {"document": completion.document, "task_id": completion.task_id,
                       "attempt": completion.attempt, "model": completion.model}
             if context.kind == "quick":
-                store.turn_finish(turn_id, full, (time.time() - started) * 1000, **record)
+                store.turn_finish(turn_id, full, (now-task_started) * 1000, **record)
             else:
                 store.detail_add(turn_id, context.key, full, **record)
             if sessions.finish(context, full):
@@ -468,12 +477,15 @@ def _callbacks(context: TaskContext, started: float):
             if not active() or not sessions.begin_attempt(context, number, model):
                 raise StreamCancelled("cancelled")
             attempt["number"] = number
+            attempt_started[0] = time.perf_counter()
             broadcast(_task_event(context, "answer_attempt", attempt=number, model=model))
 
     def on_context(pack):
         with _INTERVIEW_LOCK:
             if not active() or not sessions.set_sources(context, pack.sources):
                 raise StreamCancelled("cancelled")
+            if getattr(pack, 'preparation_ms', None) is not None:
+                sessions.record_timing(context, 'context_pack_ms', pack.preparation_ms)
             broadcast(_task_event(context, "answer_context", sources=pack.sources))
 
     return on_delta, on_done, on_error, on_attempt, on_context
@@ -486,17 +498,23 @@ def spawn_quick(question: str, context: TaskContext, self_recent: str = ""):
     callbacks = _callbacks(context, started)
     token = sessions.cancellation(context)
     dialogue = sessions.dialogue(context)
+    queued_at = time.perf_counter()
 
     def work():
         if not rt.ready or not sessions.is_active(context):
             return
         try:
+            sessions.record_timing(context, 'answer_queue_ms', (time.perf_counter()-queued_at)*1000)
+            retrieval_started = time.perf_counter()
             resume, evidence, jd = resume_text(), answer_evidence(question, dialogue=dialogue), jd_text()
+            profile = rt.knowledge.profile() if rt.knowledge else ''
+            facts = rt.knowledge.constraints(question) if rt.knowledge else []
+            sessions.record_timing(context, 'retrieval_ms', (time.perf_counter()-retrieval_started)*1000)
             if not rt.ready or not sessions.is_active(context):
                 return
             llm.stream_quick(history, resume, *callbacks[:3],
                              self_recent=self_recent, evidence=evidence, jd=jd,
-                             candidate_profile=rt.knowledge.profile() if rt.knowledge else "",
+                             candidate_profile=profile, candidate_facts=facts,
                              dialogue_context=dialogue,
                              cancel_token=token, on_attempt=callbacks[3], on_context=callbacks[4])
         except StreamCancelled:
@@ -524,21 +542,29 @@ def spawn_detail(direction: str, turn_id: str | None = None):
         token = sessions.cancellation(context)
         broadcast(_task_event(context, "detail_start", at=time.strftime("%H:%M:%S")))
         dialogue = sessions.dialogue(context)
+        queued_at = time.perf_counter()
 
     def work():
         if not rt.ready or not sessions.is_active(context):
             return
         try:
+            sessions.record_timing(context, 'answer_queue_ms', (time.perf_counter()-queued_at)*1000)
+            retrieval_started = time.perf_counter()
             resume = resume_text()
             detail_dialogue = {**dialogue, "retrieval_query": dialogue.get("retrieval_query", turn.question) + " " + direction}
             evidence = answer_evidence(turn.question + " " + direction, detail=True, dialogue=detail_dialogue)
+            profile = rt.knowledge.profile() if rt.knowledge else ''
+            facts = rt.knowledge.constraints(turn.question + ' ' + direction) if rt.knowledge else []
+            sessions.record_timing(context, 'retrieval_ms', (time.perf_counter()-retrieval_started)*1000)
+            enrichment_started = time.perf_counter()
             enrich = enrichment_context(context, turn.question + " " + direction)
+            sessions.record_timing(context, 'enrichment_ms', (time.perf_counter()-enrichment_started)*1000)
             if not rt.ready or not sessions.is_active(context):
                 return
             llm.stream_detail(turn.question, turn.quick, direction, history, resume,
                               *callbacks[:3], self_recent=self_recent,
                               evidence=evidence, enrich=enrich, jd=jd_text(),
-                              candidate_profile=rt.knowledge.profile() if rt.knowledge else "",
+                              candidate_profile=profile, candidate_facts=facts,
                               dialogue_context=dialogue,
                               cancel_token=token, on_attempt=callbacks[3], on_context=callbacks[4])
         except StreamCancelled:
@@ -679,10 +705,15 @@ def _revise_merged(qtext,turn_id):
         turn = SESSIONS.active_turn(_SESSION_ID)
         if not turn or turn.turn_id != turn_id:
             return _start_question(qtext,manual=False)
-        history_store.log_event("question_revised",{"previous_question":turn.question,"previous_answer":turn.quick,"question":qtext},session_id=_DB_SESSION_ID)
-        history_store.turn_revise(int(turn_id.value) if turn_id.value.isdecimal() else None,qtext)
+        previous = turn.revision_record()
+        history_store.turn_revise(int(turn_id.value) if turn_id.value.isdecimal() else None, qtext, previous=previous)
+        history_store.log_event("question_revised", {"turn_id": turn_id.value,
+                                "previous_question": turn.question, "previous_answer": previous["answer"],
+                                "question": qtext}, session_id=_DB_SESSION_ID)
         context = SESSIONS.revise_turn(_SESSION_ID,turn_id,qtext)
-        broadcast(_task_event(context,"answer_start",question=qtext,revised=True,at=time.strftime("%H:%M:%S")))
+        revisions = SESSIONS.turn(_SESSION_ID, turn_id).revisions
+        broadcast(_task_event(context, "answer_start", question=qtext, revised=True,
+                              revisions=revisions, revision_count=len(revisions), at=time.strftime("%H:%M:%S")))
         spawn_quick(qtext,context,self_ctx_quick())
         return context
 
@@ -979,6 +1010,7 @@ async def state():
     return {
         "listening": capture["listening"],
         "self_listening": capture["self_listening"],
+        "capture_failed": capture["failed"],
         "history_len": len(SESSIONS.turns(_SESSION_ID)),
         "session_id": _SESSION_ID.value,
         "preview": bool(getattr(app.state, "synthetic_preview", False)),
@@ -1360,9 +1392,10 @@ async def save_recording_settings(payload: dict):
 
 @app.get('/api/recordings/current')
 async def current_recording():
+    capture = capture_state()
     return {'ok': True, **_RUNTIME.recordings.snapshot(_SESSION_ID.value),
             'enabled': _RUNTIME.recording_settings.public()['enabled'],
-            'capturing': [source for source, key in (('mic', 'self_listening'), ('loopback', 'listening')) if STATE[key]]}
+            'capturing': [source for source, key in (('mic', 'self_listening'), ('loopback', 'listening')) if capture[key]]}
 
 
 @app.get('/api/recordings/{sid}')
@@ -1743,6 +1776,7 @@ def session_snapshot(reason="requested"):
         for turn in SESSIONS.turns(_SESSION_ID):
             turns.append({"turn_id": turn.turn_id.value, "generation": turn.generation,
                           "question": turn.question, "status": turn.status, "at": turn.at,
+                          "revisions": turn.revisions, "revision_count": len(turn.revisions),
                           "answers": [{"task_id": answer.task_id, "level": answer.kind,
                                        "direction": answer.key, "content": answer.content,
                                        "status": answer.status, "error": answer.error,
