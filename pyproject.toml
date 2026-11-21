@@ -25,7 +25,7 @@ audio = [
 ]
 pdf = ["pypdf>=5,<7"]
 speech = ["numpy>=1.26,<3", "onnxruntime>=1.20,<2", "soxr>=0.5,<2", "transformers>=4.44,<6"]
-offline-asr = ["faster-whisper>=1.1,<2"]
+offline-asr = ["faster-whisper>=1.1,<2", "python-multipart>=0.0.18,<1"]
 semantic = ["sentence-transformers>=3,<6"]
 dev = ["pytest>=8,<10"]
 

@@ -38,6 +38,27 @@ macOS 版本沿用现有 FastAPI 服务和浏览器工作区。麦克风通过 C
 
 如果页面提示未发现系统声音输入，先确认虚拟设备已安装，再点击“刷新设备”或重启服务。多输出设备只负责路由；网页选择的是其中的 BlackHole 输入，不是多输出设备本身。
 
+## 本机 Whisper 转写服务
+
+没有现成 STT 服务时，可以在项目根目录安装本地转写依赖，显式下载模型：
+
+```bash
+.venv/bin/python -m pip install -e '.[offline-asr]'
+.venv/bin/python tools/local_stt_server.py --model base --prepare
+```
+
+`base` 是用于功能验收的多语言小模型，约 150 MB。正式面试可按机器性能评估 `small` 或 `large-v3-turbo` 的中文准确率和延迟，分别用对应的 `--model` 准备权重。权重保存在受 Git 忽略的 `data/whisper-models/<模型>/`。Hugging Face 无法直连时，可由用户选择通过 `HF_ENDPOINT` 设置镜像；该地址会接收模型下载请求。
+
+在一个终端窗口启动 STT，并在另一个窗口启动面试助手：
+
+```bash
+.venv/bin/python tools/local_stt_server.py --model base
+# 另一个终端窗口：
+.venv/bin/python server.py
+```
+
+STT 仅监听 `127.0.0.1:8760`，使用 CPU int8，不在启动时下载模型。默认配置 `stt.url=http://127.0.0.1:8760/v1`、`stt.model=whisper-1` 可直接使用；`whisper-1` 是当前已加载模型的协议别名。服务支持普通 JSON、文本和带时间戳/质量字段的 `verbose_json`，不会同时加载多份模型。它与会话结束后的离线精转写分别运行；准备 `base` 不等于已准备精转写设置中的 `large-v3`。
+
 ## 连续语音与会话录音
 
 兼容流程和连续语音流程共用同一套 CoreAudio 设备选择、录音归档和启动/停止生命周期。连续语音不会把处理窗口误当成问题结束，但启用前需要显式准备经过校验的本地 VAD 与端点模型：
@@ -64,4 +85,4 @@ cp config.example.json config.json  # 仅在本地配置不存在时
 - 系统声音依赖第三方虚拟音频驱动；项目不会静默安装或修改系统音频路由。
 - 根目录 `config.json`、`data/` 与 `.env` 仍沿用 legacy 运行时位置并受 Git 忽略。本次适配没有迁移 Windows 用户数据。
 - 网页保存的长期 API Key 目前只有 Windows DPAPI 保护。macOS 应使用会话密钥或由用户显式设置的环境变量，原生 Keychain 支持尚未实现。
-- 实时 STT 服务由用户自行提供；启动器只检查配置中的 `/models` 是否可访问。连续语音和离线精转写模型均只通过上述显式命令准备。
+- 实时 STT 可使用上述本地服务或用户已有的兼容服务；启动器只检查配置中的 `/models` 是否可访问。模型均通过显式准备命令下载。
