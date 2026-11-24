@@ -24,7 +24,10 @@ def test_http_entry_points_keep_selected_turn_and_reject_stale_session(legacy_se
         client.post("/api/clear")
         response = client.post("/api/detail", json={**second, "direction": "mechanism"})
         assert response.status_code == 409
-        assert client.get("/api/state").json()["session_id"] != first["session_id"]
+        state = client.get("/api/state").json()
+        assert state["session_id"] != first["session_id"]
+        assert state["stt"] == {"configured": True, "model": "fake", "location": "remote",
+                                "connection_checked": False}
 
 
 def test_concurrent_http_uploads_are_independent_and_cleanup(legacy_server):

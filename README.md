@@ -29,14 +29,38 @@ Copy `config.example.json` to `config.json` and fill in your own local settings.
 
 ## Run locally
 
-Install the project dependencies into the existing environment, including the audio and PDF extras:
+Use a dedicated virtual environment. The following flow has been verified with CPython 3.11.15 on Windows; do not assume `py -3.11` can see vendor-managed or Astral/uv Python installations.
+
+```powershell
+py -0p
+Get-Command python -All
+python --version
+```
+
+Select an interpreter that actually reports Python 3.11 or newer. For example, use the exact tag shown by `py -0p`, or ask uv for its registered 3.11 interpreter:
+
+```powershell
+# Launcher example when py -0p shows a vendor tag:
+py -V:Astral/CPython3.11.15 -m venv venv
+
+# Alternative when uv manages Python:
+$python = uv python find 3.11
+& $python -m venv venv
+```
+
+Then install and create a private configuration only when one does not already exist:
 
 ```powershell
 .\venv\Scripts\python.exe -m pip install -e '.[audio,pdf]'
+if (!(Test-Path .\config.json)) { Copy-Item .\config.example.json .\config.json }
 .\venv\Scripts\python.exe server.py
 ```
 
-The desktop workspace defaults to `http://127.0.0.1:8527`. Opening the page does not start recording; use the listen control. `start-desktop.bat` checks service readiness and opens the workspace.
+The desktop workspace defaults to `http://127.0.0.1:8527`. A working page only proves that the local web service started. The example answer-provider URL is deliberately unusable, and the example STT URL requires a separate service on port 8760. Neither model weights nor an STT server are downloaded automatically.
+
+The preparation panel separately reports capture devices, answer-provider configuration, real-time STT configuration, materials and local recording. “Configured” or “connection not checked” is not a successful model/transcription test. Configure your own answer service under `/settings`, then explicitly test it; provider requests may leave the computer and may incur charges. See the [Windows first-run guide](docs/first-run-windows.md) for interpreter discovery, readiness checks, STT setup boundaries, data flow and troubleshooting.
+
+Opening the page does not start audio capture; use the listen control. Session recording is enabled by default and can be turned off under `/settings`; an existing saved choice is preserved. `start-desktop.bat` checks service readiness and opens the workspace.
 
 For PC capture with phone display, run `start-phone.bat`, or `python server.py --mobile --auto-listen`. This starts PC loopback and microphone capture without opening a desktop browser. The launcher prints LAN addresses and a single-use pairing code. The desktop phone control also provides a QR code and revocation. Phone and desktop share the same runtime and active session.
 

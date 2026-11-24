@@ -60,6 +60,7 @@ from interview_copilot.services.recording_settings import RecordingSettings
 from interview_copilot.services.recordings import SessionRecordings
 from interview_copilot.services.session_package import SessionPackageError, SessionPackageExporter
 from interview_copilot.legacy.mobile import create_mobile_app
+from interview_copilot.providers.http_policy import trust_env_for_url
 
 from copilot.audio import AudioEngine, list_output_devices, list_input_devices  # noqa: E402
 from copilot.llm import LLMClient, StreamCancelled                             # noqa: E402
@@ -1151,6 +1152,9 @@ async def state():
         rmeta = {"loaded":bool(text), "source":(meta or {}).get("name", ""), "chars":len(text),
                  "loaded_at":(meta or {}).get("updated_at", ""), "note":"资料管理", "origin":""}
     capture = capture_state()
+    stt_config = CFG.get("stt", {})
+    stt_url = stt_config.get("url", "") if isinstance(stt_config, dict) else ""
+    stt_model = stt_config.get("model", "") if isinstance(stt_config, dict) else ""
     return {
         "listening": capture["listening"],
         "self_listening": capture["self_listening"],
@@ -1159,6 +1163,9 @@ async def state():
         "session_id": _SESSION_ID.value,
         "preview": bool(getattr(app.state, "synthetic_preview", False)),
         "speech": {"mode": _RUNTIME.speech_mode, "drafts": speech_drafts(), "review_enabled": _RUNTIME.review_enabled},
+        "stt": {"configured": bool(stt_url and stt_model), "model": stt_model,
+                "location": "remote" if stt_url and trust_env_for_url(stt_url) else "local",
+                "connection_checked": False},
         "audio_test_mode": _RUNTIME.audio_test_mode,
         "self_recent": CONV.recent(max_chars=160),
         "papers": knowledge.load_status(),

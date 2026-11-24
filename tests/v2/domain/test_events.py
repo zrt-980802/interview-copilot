@@ -227,6 +227,21 @@ def test_event_payload_is_protected_against_mutation() -> None:
         event.payload["text"] = "mutated"  # type: ignore[index]
 
 
+def test_default_event_payload_is_per_instance_and_immutable() -> None:
+    values = {
+        "session_id": SessionId("s-1"),
+        "turn_id": TurnId("t-1"),
+        "generation": 0,
+        "kind": "answer.started",
+    }
+    first = AnswerEvent(**values)
+    second = AnswerEvent(**values)
+    assert first.payload == second.payload == {}
+    assert first.payload is not second.payload
+    with pytest.raises(TypeError):
+        first.payload["text"] = "mutated"  # type: ignore[index]
+
+
 # ---------------------------------------------------------------------------
 # SessionState: per-session mutable state, no module-level singleton
 # ---------------------------------------------------------------------------

@@ -68,6 +68,14 @@
     return text.join(' · ');
   }
 
+  function speechState() {
+    if (!capture?.stt) return '状态未知';
+    if (!capture.stt.configured) return '未配置';
+    const location = capture.stt.location === 'remote' ? '远程服务' : '本机服务';
+    return [capture.stt.model, location, capture.stt.connection_checked ? '连接已检查' : '连接未检查']
+      .filter(Boolean).join(' · ');
+  }
+
   function renderPreparation() {
     const idle = !withQuestions && !capture?.listening && !capture?.self_listening;
     const open = preparationOverride ?? (idle && view !== 'focus');
@@ -80,6 +88,7 @@
     const model = providers?.quick_model;
     $('prepModel').textContent = !slot ? checkedAt ? '状态未知' : '未检查'
       : !slot.configured ? '未配置' : [model, '连接未检查'].filter(Boolean).join(' · ');
+    $('prepSpeech').textContent = speechState();
     $('prepMaterials').textContent = materialState();
     $('prepRecording').textContent = recording ?? '状态未知';
   }

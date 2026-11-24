@@ -47,6 +47,7 @@ for (const viewport of [{width:1365,height:768},{width:390,height:844}]) {
     await page.locator('#connectionState').filter({hasText:'已连接'}).waitFor();
     await page.locator('#prepOutput').filter({hasText:'尚未检测声音'}).waitFor();
     await page.locator('#prepModel').filter({hasText:/连接未检查|未配置/}).waitFor();
+    await page.locator('#prepSpeech').filter({hasText:/(本机|远程)服务 · 连接未检查/}).waitFor();
     await page.locator('#prepRecording').filter({hasText:/本地归档|已关闭/}).waitFor();
     assert.equal(await page.locator('#feed').evaluate(feed=>feed.scrollTop),0);
     assert.ok(await page.locator('#prepOutput').evaluate(element=>{
