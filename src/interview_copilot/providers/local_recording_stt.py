@@ -46,10 +46,11 @@ class LocalRecordingTranscriber:
         self.replies = queue.Queue()
         self.log = (self.directory / 'local-asr.log').open('a', encoding='utf-8')
         script = Path(__file__).resolve().parents[3] / 'scripts' / 'transcribe_recording_local.py'
+        profile = ['--turbo-review-profile'] if config.get('turbo_review_profile') else []
         try:
             self.process = subprocess.Popen([config['runtime_python'], '-u', str(script),
                                              '--model', config['model'], '--model-path', str(model_path),
-                                             '--device', config['device']],
+                                             '--device', config['device'], *profile],
                                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log,
                                             text=True, encoding='utf-8',
                                             env={**os.environ, 'PYTHONIOENCODING': 'utf-8', 'PYTHONUTF8': '1',

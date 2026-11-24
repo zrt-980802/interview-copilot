@@ -15,6 +15,7 @@ from interview_copilot.audio.windows import AudioRing
 from interview_copilot.domain.speech import Recognition, SpeechWindow
 from interview_copilot.services.speech_turns import TurnCoordinator
 from interview_copilot.services.speech_quality import audio_signal
+from interview_copilot.services.speech_review import MAX_REVIEW_SAMPLES, MIN_REVIEW_LEVEL, ReviewAudio, review_trigger
 
 
 def validate_options(options):
@@ -231,6 +232,30 @@ class SpeechPipeline:
     def snapshot(self):
         with self.lock:
             return self.turns.snapshot()
+
+    def review_audio(self, draft_id):
+        with self.lock:
+            ledger = self.turns.ledger
+            if (not self.is_current() or not self.turns.committed
+                    or self.turns.draft_id != draft_id or ledger.error):
+                return None, "audio_unavailable"
+            entries = ledger.ordered()
+            if not entries:
+                return None, "audio_unavailable"
+            start, end = entries[0].window.start_sample, entries[-1].window.end_sample
+            weakest = min((entry.speech_db for entry in entries if entry.speech_db is not None), default=None)
+            if not review_trigger(len(entries), weakest):
+                return None, None
+            if end - start > MAX_REVIEW_SAMPLES:
+                return None, "audio_budget"
+            try:
+                samples = self.audio.read(start, end)
+            except ValueError:
+                return None, "audio_unavailable"
+        level = audio_signal(samples)["speech_db"]
+        if level < MIN_REVIEW_LEVEL:
+            return None, "audio_weak"
+        return ReviewAudio(wav_bytes(samples), start, end, level, len(entries)), "pending"
 
     def hold(self):
         with self.lock:

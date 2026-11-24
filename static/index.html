@@ -582,10 +582,23 @@ function addBubble(text, who, side, ts){
 function showRevision(qa,event){
   const revisions=Array.isArray(event.revisions)?event.revisions:[];
   qa.revised=Boolean(event.revision_count||event.revised||revisions.length);
-  qa.el.querySelector('.turn-revision-label').hidden=!qa.revised;
+  const label=qa.el.querySelector('.turn-revision-label');
+  label.hidden=!qa.revised;
+  label.textContent=event.review_status==='corrected'?'复听修正后的问题':'补充后的完整问题';
   const container=qa.el.querySelector('.previous-revisions');
   const render=api=>{
     if(api?.renderRevisions&&container.isConnected&&qa.generation===event.generation)api.renderRevisions(container,revisions);
+  };
+  if(window.AnswerContent)render(window.AnswerContent);else answerContentReady.then(render);
+}
+
+function showSpeechReview(qa,status){
+  qa.reviewStatus=status;
+  const badge=qa.el.querySelector('.turn-review-status');
+  const render=api=>{
+    if(!badge.isConnected||qa.reviewStatus!==status)return;
+    badge.textContent=api?.speechReviewLabel?.(status)||'';
+    badge.hidden=!badge.textContent;
   };
   if(window.AnswerContent)render(window.AnswerContent);else answerContentReady.then(render);
 }
@@ -597,6 +610,7 @@ function beginQA(q,ts,event){
   const qa=document.createElement('div');qa.className='qa';
   qa.dataset.turnId=event.turn_id;
   qa.innerHTML=`<div class="turn-revision-label" hidden>补充后的完整问题</div>
+    <div class="turn-review-status" role="status" hidden></div>
     <div class="qbox"><span class="t">${esc(ts)}</span>${md(q)}</div>
     <div class="quickcard pending">思考中…</div>
     <div class="previous-revisions" hidden></div>`;
@@ -604,6 +618,7 @@ function beginQA(q,ts,event){
   Object.assign(curQA,{el:qa,card:qa.querySelector('.quickcard'),subs:new Map(),
     sessionId:event.session_id,turnId:event.turn_id,generation:event.generation,status:'pending'});
   showRevision(curQA,event);
+  showSpeechReview(curQA,event.review_status);
   qaByTurn.set(event.turn_id,curQA);
   const link=document.createElement('button');link.className='question-link';
   link.dataset.turnId=event.turn_id;link.title=q;
@@ -668,7 +683,8 @@ function renderAnswer(target,content,status,error='',answerDoc=null){
   if(status==='error'&&!content){
     body.textContent='';
   }else if(status==='pending'&&!content){
-    body.textContent=target.level==='detail'?'生成中…':target.qa.revised?'正在按补充重新生成…':'思考中…';
+    body.textContent=target.level==='detail'?'生成中…':target.qa.reviewStatus==='corrected'?'正在按修正重新生成…':
+      target.qa.revised?'正在按补充重新生成…':'思考中…';
   }else if(target.level==='detail'){
     const api=window.AnswerContent;
     if(api){
@@ -787,6 +803,9 @@ function connectSSE(){
     }
     if(t==='speech_draft'){
       window.SpeechDrafts?.update(ev,currentSession);
+    }else if(t==='speech_review'){
+      const qa=qaByTurn.get(ev.turn_id);
+      if(qa?.generation===ev.generation)showSpeechReview(qa,ev.review_status);
     }else if(t==='question'){
       const spk=ev.speaker||'interviewer';
       if(spk==='self'){
@@ -823,6 +842,7 @@ function connectSSE(){
         for(const link of $('questionList').children)if(link.dataset.turnId===ev.turn_id){link.querySelector('.nav-label').textContent=lastQuestion;link.title=lastQuestion;}
         qa.el.querySelector('.dirrow')?.remove();
         showRevision(qa,ev);
+        showSpeechReview(qa,ev.review_status);
       }
       const target={qa,box:qa.card,raw:'',level:'quick',taskId:ev.task_id,attempt:0,model:''};
       taskTargets.set(ev.task_id,target);renderAnswer(target,'','pending');

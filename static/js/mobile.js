@@ -1,4 +1,4 @@
-import {draftDocument, isAnswerDocument, renderDocument} from '/assets/answer-content.js';
+import {draftDocument, isAnswerDocument, renderDocument, speechReviewLabel} from '/assets/answer-content.js';
 
 const $ = id => document.getElementById(id);
 const turns = new Map(), tasks = new Map();
@@ -87,8 +87,9 @@ function render() {
     $('question').textContent = ''; $('number').textContent = ''; $('answers').replaceChildren(); return;
   }
   $('turns').value = selected;
+  const review = speechReviewLabel(turn.review_status);
   $('number').textContent = `问题 ${[...turns.keys()].indexOf(selected) + 1} / ${turns.size}`
-    + (turn.revision_count ? ' · 已补充' : '');
+    + (review ? ' · ' + review : turn.revision_count ? ' · 已补充' : '');
   $('question').textContent = turn.question;
   const openDetails = new Set([...$('answers').querySelectorAll('details.detail-answer[open]')].map(item => item.dataset.task));
   const fragment = document.createDocumentFragment();
@@ -153,7 +154,7 @@ function apply(event) {
     for (const [id,target] of tasks) if (target.turn.turn_id === event.turn_id) tasks.delete(id);
     for (const {answer} of tasks.values()) if (answer.level === 'quick' && ['pending', 'streaming'].includes(answer.status)) answer.status = 'cancelled';
     const turn = {turn_id: event.turn_id, question: event.question, generation: event.generation,
-                  revision_count: event.revision_count, answers: []};
+                  revision_count: event.revision_count, review_status: event.review_status, answers: []};
     const answer = {task_id: event.task_id, level: 'quick', status: 'pending', content: '', attempt: 0};
     turn.answers.push(answer); turns.set(event.turn_id, turn); tasks.set(event.task_id, {turn, answer});
     if (following) { selected = event.turn_id; scheduleRender(true); } else scheduleRender();
@@ -161,6 +162,11 @@ function apply(event) {
   }
   const turn = turns.get(event.turn_id);
   if (!turn || turn.generation !== event.generation) return;
+  if (event.type === 'speech_review') {
+    turn.review_status = event.review_status;
+    scheduleRender();
+    return;
+  }
   if (event.type === 'detail_start') {
     if (tasks.has(event.task_id)) return;
     const answer = {task_id: event.task_id, level: 'detail', direction: event.direction, status: 'pending', content: '', attempt: 0};

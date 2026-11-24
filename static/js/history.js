@@ -1,8 +1,8 @@
-import {draftDocument, isAnswerDocument, renderDocument, renderRevisions} from '/static/js/answer-content.js';
+import {draftDocument, isAnswerDocument, renderDocument, renderRevisions, speechReviewEvidence, speechReviewLabel} from '/static/js/answer-content.js';
 import {recordingReview} from '/static/js/recording-review.js';
 
 const $ = id => document.getElementById(id);
-let sessions = [], selected, query = '', offset = 0, listRequest = 0, detailRequest = 0;
+let sessions = [], selected, selectedSession, query = '', offset = 0, listRequest = 0, detailRequest = 0, packageRequest = 0;
 let listController, detailController, searchTimer;
 const node = (tag, className, text) => {
   const element = document.createElement(tag); element.className = className || '';
@@ -61,15 +61,21 @@ function answerView(content, level, document, status, meta) {
   toolbar.append(copy); root.append(body, toolbar); return root;
 }
 function renderSession(value) {
+  selectedSession = value;
   $('sessionTitle').textContent = value.title || '未命名会话';
   $('sessionMeta').textContent = `${value.started_at} · ${value.turns.length} 题 · ${value.end_at ? '已结束' : '未结束'}`;
   $('export').href = `/api/history/export/${value.id}`; $('export').download = `interview-${value.id}.md`;
+  $('packageOpen').disabled = false;
   const fragment = document.createDocumentFragment();
   fragment.append(recordingReview(value.id));
   for (const [index, turn] of value.turns.entries()) {
     const article = node('article', 'history-turn'); article.dataset.turnId = turn.id;
     article.append(node('div', 'turn-index', `问题 ${index + 1} · ${turn.ts}`));
-    if (turn.revisions?.length) article.append(node('div', 'turn-revision-label', '补充后的完整问题'));
+    const review = turn.speech_review;
+    const reviewLabel = speechReviewLabel(review?.status);
+    if (reviewLabel) article.append(node('div','turn-review-status',reviewLabel));
+    if (turn.revisions?.length) article.append(node('div', 'turn-revision-label',
+      review?.status === 'corrected' ? '复听修正后的问题' : '补充后的完整问题'));
     article.append(node('h3', '', turn.question));
     if (turn.quick_card) article.append(answerView(turn.quick_card, 'quick', turn.quick_document, turn.quick_document_status, turn.quick_meta));
     else article.append(node('div', 'unanswered', '未保存完整回答'));
@@ -78,6 +84,8 @@ function renderSession(value) {
       renderRevisions(old, turn.revisions);
       article.append(old);
     }
+    const trace = speechReviewEvidence(review);
+    if (trace) article.append(trace);
     if (turn.self_context) {
       const context = node('details', 'candidate-context');
       context.append(node('summary', '', '当时的发言记录'), node('pre', '', turn.self_context)); article.append(context);
@@ -94,11 +102,60 @@ function renderSession(value) {
   $('reviewEmpty').hidden = true; $('sessionToolbar').hidden = false;
   window.lucide?.createIcons();
 }
+function closePackage() {
+  ++packageRequest; $('packagePanel').hidden = true; $('packageStatus').textContent = '';
+}
+function renderPackage(value) {
+  const recording = value.recording;
+  $('packageAvailability').replaceChildren(
+    node('p','', value.ended ? value.association.message : '面试仍在进行，请结束面试后再导出。'),
+    node('p','', `离线转写：${recording.transcription_state} · 录音侧实时事件：${recording.realtime_events} 条`),
+    ...value.warnings.map(warning => node('p','package-warning',warning))
+  );
+  $('packageTrackOptions').replaceChildren(...recording.tracks.map(track => {
+    const label = node('label','package-track');
+    const input = document.createElement('input'); input.type = 'checkbox'; input.value = track.id;
+    input.checked = track.available > 0; input.disabled = track.available === 0;
+    label.append(input,node('span','',`${track.label} · ${track.available} 个可用片段${track.unavailable ? ` · ${track.unavailable} 个不可用` : ''}`));
+    return label;
+  }));
+  $('packageAudio').checked = false; $('packageAudio').disabled = !value.can_include_audio;
+  $('packageTracks').disabled = true; $('packageDownload').disabled = !value.can_export;
+}
+async function openPackage() {
+  if (!selectedSession) return;
+  $('packagePanel').hidden = false; $('packageAvailability').textContent = '核对可用内容…'; $('packageStatus').textContent = '';
+  const request = ++packageRequest;
+  try {
+    const value = await get(`/api/history/package/${selectedSession.id}`);
+    if (request !== packageRequest) return;
+    renderPackage(value.package); window.lucide?.createIcons();
+  } catch (error) {
+    if (request === packageRequest) { $('packageAvailability').textContent = error.message; $('packageDownload').disabled = true; }
+  }
+}
+async function downloadPackage() {
+  const button = $('packageDownload'); button.disabled = true; $('packageStatus').classList.remove('error');
+  $('packageStatus').textContent = '正在本地生成数据包…';
+  const includeAudio = $('packageAudio').checked;
+  const tracks = includeAudio ? [...$('packageTrackOptions').querySelectorAll('input:checked')].map(input => input.value) : [];
+  try {
+    const response = await fetch(`/api/history/package/${selectedSession.id}`, {method:'POST',cache:'no-store',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({include_audio:includeAudio,tracks})});
+    if (!response.ok) { const value = await response.json().catch(() => ({})); throw new Error(value.error || '数据包生成失败'); }
+    const blob = await response.blob(), url = URL.createObjectURL(blob), anchor = document.createElement('a');
+    anchor.href = url; anchor.download = `interview-${selectedSession.id}-data.zip`; anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    $('packageStatus').textContent = '数据包已生成，浏览器已开始保存。请检查清单和内容后再分享。';
+  } catch (error) { $('packageStatus').textContent = error.message; $('packageStatus').classList.add('error'); }
+  finally { button.disabled = !selectedSession?.end_at; }
+}
 async function selectSession(id) {
   selected = Number(id); rows(); document.body.classList.add('reviewing');
   const url = new URL(location.href); url.searchParams.set('session', selected); history.replaceState(null, '', url);
   detailController?.abort(); detailController = new AbortController(); const request = ++detailRequest;
   $('reviewState').classList.remove('error'); $('reviewState').textContent = '读取中…';
+  closePackage(); selectedSession = undefined;
   $('reviewContent').replaceChildren(); $('sessionToolbar').hidden = true; $('reviewEmpty').hidden = true;
   try {
     const value = await get('/api/history/session/' + selected, detailController.signal);
@@ -112,9 +169,13 @@ $('searchForm').onsubmit = event => { event.preventDefault(); clearTimeout(searc
 $('search').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { query = $('search').value.trim(); loadSessions(); }, 250); };
 $('loadMore').onclick = () => loadSessions(true);
 $('refresh').onclick = () => { loadSessions(); if (selected) selectSession(selected); };
+$('packageOpen').onclick = openPackage;
+$('packageClose').onclick = closePackage;
+$('packageAudio').onchange = () => { $('packageTracks').disabled = !$('packageAudio').checked; };
+$('packageDownload').onclick = downloadPackage;
 $('backToList').onclick = () => {
   detailController?.abort(); ++detailRequest;
-  selected = undefined; rows();
+  selected = undefined; selectedSession = undefined; closePackage(); rows();
   document.body.classList.remove('reviewing');
   const url = new URL(location.href); url.searchParams.delete('session'); history.replaceState(null, '', url);
 };

@@ -14,6 +14,7 @@ def main():
     parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto')
     parser.add_argument('--model-path')
     parser.add_argument('--prepare-only', action='store_true')
+    parser.add_argument('--turbo-review-profile', action='store_true')
     options = parser.parse_args()
     if not options.prepare_only and not options.model_path:
         parser.error('--model-path is required for offline transcription')
@@ -57,9 +58,11 @@ def main():
                             raise
                         model = WhisperModel(local_path, device='cpu', compute_type='int8', local_files_only=True)
                     print('Loaded local model: ' + options.model, file=sys.stderr)
+                decode_options = {'no_repeat_ngram_size': 4} if options.turbo_review_profile else {}
                 segments, info = model.transcribe(request['file'], language='zh', beam_size=5,
                                                    vad_filter=True, temperature=0,
-                                                   condition_on_previous_text=True)
+                                                   condition_on_previous_text=not options.turbo_review_profile,
+                                                   **decode_options)
                 parts = [{'start': float(s.start), 'end': float(s.end), 'text': s.text,
                           'avg_logprob': float(s.avg_logprob), 'no_speech_prob': float(s.no_speech_prob),
                           'compression_ratio': float(s.compression_ratio)} for s in segments]

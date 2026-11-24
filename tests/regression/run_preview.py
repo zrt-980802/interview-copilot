@@ -138,6 +138,31 @@ def create_preview():
         server._on_event(type='speech_draft', **draft)
         return {'ok':True}
 
+    review_ready = threading.Event()
+
+    @server.app.post("/__regression__/speech-review")
+    async def speech_review(body: dict):
+        from interview_copilot.services.speech_review import ReviewAudio
+        if body.get("release"):
+            review_ready.set()
+            return {"ok": True}
+        review_ready.clear()
+        server._RUNTIME.review_enabled = True
+        server.ENGINE.accept_commit = lambda event: True
+        server.ENGINE.review_audio = lambda draft: (ReviewAudio(b"preview", 0, 32000, -20, 2), "pending")
+
+        def review(*args):
+            if not review_ready.wait(10):
+                return {"status": "timed_out"}, None
+            return {"status": "corrected", "elapsed_ms": 500, "evidence": {
+                "models": ["large-v3-turbo", "large-v3"], "large_text": body["corrected"],
+            }}, body["corrected"]
+
+        server.run_review = review
+        server._on_event(type="speech_commit", draft_id=body.get("draft", "preview-review"), revision=1, speaker="interviewer",
+                         input_generation=server.ENGINE.generation, text=body["first"], decision="accept_question")
+        return {"ok": True}
+
     @server.app.post("/__regression__/next-pairing-window")
     async def next_pairing_window():
         pairing_clock_offset[0] += 61

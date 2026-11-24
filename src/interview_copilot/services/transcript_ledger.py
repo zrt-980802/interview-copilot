@@ -13,6 +13,7 @@ class _Entry:
     final: bool = False
     result: Recognition | None = None
     error: str = ""
+    speech_db: float | None = None
 
 
 class TranscriptLedger:
@@ -38,6 +39,7 @@ class TranscriptLedger:
             raise ValueError("invalid recognition")
         entry.revision, entry.final, entry.result, entry.error = revision, bool(final), result, ""
         entry.error = recognition_issue(result, signal)
+        entry.speech_db = signal.get("speech_db") if signal else None
         return True
 
     def fail(self, seq, reason):

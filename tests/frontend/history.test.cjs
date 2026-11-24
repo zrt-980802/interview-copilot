@@ -153,6 +153,47 @@ test('history ignores a delayed response for a previously selected session', {sk
   assert.deepEqual(errors, []);
 });
 
+test('history package export selects available tracks and reports completion and failure on narrow screens', {skip}, async t => {
+  const {page,errors} = await fixture(t);
+  const value = session(77); let posted, fail = false;
+  await mockSession(page,value);
+  await page.route('**/api/history/package/77', async route => {
+    if (route.request().method() === 'GET') return route.fulfill({json:{ok:true,package:{
+      session_id:77,ended:true,can_export:true,can_include_audio:true,
+      association:{state:'verified',message:'历史会话与录音清单关联已核验。'},
+      recording:{transcription_state:'running',realtime_events:2,tracks:[
+        {id:'mic',label:'麦克风',available:2,unavailable:0},
+        {id:'loopback',label:'系统声音',available:0,unavailable:1},
+      ]},warnings:['离线转写状态为 running；只包含当前已保存结果。']
+    }}});
+    posted = route.request().postDataJSON();
+    return fail ? route.fulfill({status:507,json:{error:'合成磁盘空间不足'}})
+      : route.fulfill({status:200,headers:{'Content-Type':'application/zip'},body:Buffer.from('synthetic zip')});
+  });
+  await page.goto(base + '/history?session=77');
+  await page.getByRole('button',{name:'导出数据包'}).click();
+  await page.getByText('历史会话与录音清单关联已核验。').waitFor();
+  assert.equal(await page.getByLabel('包含本地录音').isChecked(),false);
+  assert.equal(await page.getByLabel(/麦克风/).isChecked(),true);
+  assert.equal(await page.getByLabel(/系统声音/).isDisabled(),true);
+  await page.getByLabel('包含本地录音').check();
+  const downloadReady = page.waitForEvent('download');
+  await page.getByRole('button',{name:'生成 ZIP'}).click();
+  const download = await downloadReady;
+  assert.equal(download.suggestedFilename(),'interview-77-data.zip');
+  assert.deepEqual(posted,{include_audio:true,tracks:['mic']});
+  await page.getByText(/数据包已生成/).waitFor();
+
+  await page.setViewportSize({width:390,height:844});
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),true);
+  fail = true;
+  await page.getByRole('button',{name:'生成 ZIP'}).click();
+  await page.getByText('合成磁盘空间不足').waitFor();
+  assert.equal(await page.locator('#packageStatus').getAttribute('class'), 'package-status error');
+  await screenshot(page,'history-package-390');
+  assert.deepEqual(errors, []);
+});
+
 test('history long question, source and code fit desktop, narrow and 200-percent equivalent viewports', {skip}, async t => {
   const {page,errors} = await fixture(t);
   const value = session(88, '在约束发生变化时，如何说明索引优化方案的适用范围和验证方法？' + 'LongIdentifier'.repeat(12));

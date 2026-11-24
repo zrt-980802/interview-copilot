@@ -177,10 +177,10 @@ def probe(args, credential):
         os.environ.pop(key_name, None)
     result["duration_ms"] = round((time.monotonic() - started) * 1000)
     result["chars"] = len(result["content"])
-    result["execution_path"] = ("local_clarification" if result["attempts"] and
-                                all(item["model"] == "local:clarification" for item in result["attempts"])
-                                else "provider" if result["attempts"] else "preflight")
-    result["provider_attempts"] = sum(item["model"] != "local:clarification" for item in result["attempts"])
+    result["provider_attempts"] = sum(not item["model"].startswith("local:") for item in result["attempts"])
+    result["execution_path"] = ("provider" if result["provider_attempts"] else
+                                result["attempts"][0]["model"].replace(":", "_") if result["attempts"]
+                                else "preflight")
     return result
 
 

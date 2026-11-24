@@ -13,9 +13,9 @@ _TOPICS = (
     (r"缓存|Redis", "缓存与数据一致性"),
     (r"Agent|智能体", "Agent系统"),
 )
-_SWITCH = re.compile(r"下一个问题|换个话题|换一道|接下来|再问(?:你)?一个|\bnext question\b", re.I)
-_DEICTIC = re.compile(r"这(?:个|块|部分|些|种|里|套)|那(?:个|块|部分)|你们|它|刚(?:才|刚)|上述|前面|上面|团队|工作量|多少人|几个人|\b(?:it|that|this|your team)\b", re.I)
-_FOLLOWUP = re.compile(r"^(?:(?:那|那么)[，, ]*如果|(?:那[，, ]*)?(?:为什么(?:要)?(?:这样|这么)|(?:你)?(?:再|继续)(?:展开|讲|说)|具体呢))")
+_SWITCH = re.compile(r"下一个问题|换(?:个|一个)话题|换一道|接下来[，, ]*(?:换|问另|看另)|再问(?:你)?一个|\bnext question\b", re.I)
+_DEICTIC = re.compile(r"这(?:个|块|部分|些|种|里|套)|那(?:个|块|部分)|你们|它|刚(?:才|刚)|上述|前面|上面|团队|工作量|多少人|几个人|第[一二三四五六七八九十\d]+(?:个|种|项|步|条)|\b(?:it|that|this|your team|the (?:first|second|third))\b", re.I)
+_FOLLOWUP = re.compile(r"^(?:(?:那|那么)[，, ]*如果|补充(?:一个|一条|一下)|更正(?:一下)?|接下来(?:怎么|如何)|(?:那[，, ]*)?(?:为什么(?:要)?(?:这样|这么)|(?:你)?(?:再|继续)(?:展开|讲|说)|具体呢))")
 _EXPERIENCE = re.compile(
     r"自我介绍|简历|个人经历|你们.*(?:人|团队|分工|规模|工作量)|(?:团队|项目).*(?:几人|多少人|几个人|工作量)|"
     r"工作量|你.*(?:做过|做的|主导|带领|负责|参与|学过|用过|使用过|接手|遇到|从零|从0)|"
@@ -64,12 +64,13 @@ def context_excerpt(question):
 def question_context(question, previous=None):
     """Resolve only conversational hints; a topic is not a verified personal fact."""
     previous = previous or {}
+    topic_switch = bool(_SWITCH.search(question))
     topic = next((name for pattern, name in _TOPICS if re.search(pattern, question, re.I)), "")
     # Preserve a specific project while a follow-up uses a broader term such as 图谱.
-    if topic == "知识图谱项目" and "图谱" in previous.get("topic", "") and not _SWITCH.search(question):
+    if topic == "知识图谱项目" and "图谱" in previous.get("topic", "") and not topic_switch:
         topic = previous["topic"]
     linked = bool(previous and (not topic or not previous.get("topic") or topic == previous["topic"])
-                  and not _SWITCH.search(question)
+                  and not topic_switch
                   and (_DEICTIC.search(question) or _FOLLOWUP.match(question)))
     inherited = linked and not topic
     if inherited:
@@ -83,6 +84,7 @@ def question_context(question, previous=None):
     return {
         "question": question,
         "topic": topic,
+        "topic_switch": topic_switch,
         "topic_question": context_excerpt(root or referent or question) if inherited else context_excerpt(question),
         "referent_question": context_excerpt(referent),
         "topic_question_anchor": root if root != referent else "",
@@ -94,7 +96,7 @@ def question_context(question, previous=None):
     }
 
 
-def evidence_queries(question, dialogue=None):
+def evidence_queries(question, dialogue=None, *, detail=False):
     """Use a focused facet for terse project follow-ups without losing the original."""
     dialogue = dialogue or {}
     query = dialogue.get("retrieval_query") or question
@@ -105,8 +107,12 @@ def evidence_queries(question, dialogue=None):
         facets.append("团队 人数 分工 本人角色 职责")
     if re.search(r"评估|质量|schema|准确率|召回率", question, re.I):
         facets.append("标注 schema 质量 验证 错误 指标")
-    focused = " ".join(part for part in (dialogue.get("topic", ""), " ".join(facets)) if part)
-    return list(dict.fromkeys([query] + ([focused] if facets and dialogue.get("topic") else [])))
+    queries = [query]
+    if facets and dialogue.get("topic"):
+        queries.append(" ".join([dialogue["topic"], *facets]))
+    if detail and re.search(r"single[ -]?flight|缓存.*(?:回填|版本|删除|失效|一致)", query, re.I):
+        queries.append("缓存 删除 旧值 回填 版本 墓碑 原子")
+    return list(dict.fromkeys(queries))
 
 
 def relevant_evidence(question, evidence, dialogue=None):

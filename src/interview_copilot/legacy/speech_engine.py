@@ -41,6 +41,10 @@ class ContinuousAudioEngine(AudioEngine):
     def hold_draft(self):
         return bool(self.pipeline and self.pipeline.hold())
 
+    def review_audio(self, draft_id):
+        pipeline = self.pipeline
+        return pipeline.review_audio(draft_id) if pipeline else (None, "audio_unavailable")
+
     def _pipeline(self, generation):
         def current():
             return not self._stop_flag.is_set() and self.generation == generation

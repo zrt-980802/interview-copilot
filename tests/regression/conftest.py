@@ -73,6 +73,7 @@ class FakeHistory:
         self.writes = []
         self.next_turn = 100
         self.closed = False
+        self.recording_links = {}
 
     def start(self):
         self.closed = False
@@ -93,6 +94,18 @@ class FakeHistory:
     def session_end(self, *args, **kwargs):
         pass
 
+    def link_recording(self, recording_session_id, association_id, enabled_at_start, *, session_id=None):
+        self.recording_links[int(session_id)] = {
+            "history_session_id": int(session_id), "recording_session_id": str(recording_session_id),
+            "association_id": association_id, "enabled_at_start": enabled_at_start, "created_at": "synthetic",
+        }
+
+    def recording_link(self, sid):
+        return self.recording_links.get(int(sid))
+
+    def get_events(self, sid):
+        return []
+
     def turn_begin(self, question, self_context="", **kwargs):
         self.next_turn += 1
         return self.next_turn
@@ -100,8 +113,11 @@ class FakeHistory:
     def turn_finish(self, turn_id, answer, latency=0, **kwargs):
         self.writes.append(("quick", turn_id, answer))
 
-    def turn_revise(self,turn_id,question,*,previous=None):
+    def turn_revise(self,turn_id,question,*,previous=None,review=None):
         self.writes.append(("revise",turn_id,question))
+
+    def turn_review(self, turn_id, review):
+        self.writes.append(("speech_review", turn_id, review))
 
     def detail_add(self, turn_id, direction, answer, **kwargs):
         self.writes.append(("detail", turn_id, answer))

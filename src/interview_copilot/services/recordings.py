@@ -70,12 +70,18 @@ class SessionRecordings:
         self.writer.start()
         self.worker.start()
 
-    def begin(self, sid):
+    def begin(self, sid, *, history_session_id=None, association_id=None):
         self._directory(sid)
+        if (history_session_id is None) != (association_id is None):
+            raise ValueError('录音关联信息不完整')
+        if association_id is not None and (type(history_session_id) is not int or history_session_id < 1
+                or not isinstance(association_id, str) or not re.fullmatch(r'[0-9a-f]{32}', association_id)):
+            raise ValueError('录音关联信息不正确')
         with self.capture_lock:
             if self.closed:
                 return
-            self.active = {'sid': str(sid), 'origin': time.monotonic(), 'started_at': _now()}
+            self.active = {'sid': str(sid), 'origin': time.monotonic(), 'started_at': _now(),
+                           'history_session_id': history_session_id, 'association_id': association_id}
 
     def set_enabled(self, enabled):
         with self.capture_lock:
@@ -114,6 +120,9 @@ class SessionRecordings:
             self.manifests[sid] = {'version': 1, 'session_id': sid, 'started_at': session['started_at'],
                                    'ended_at': None, 'state': 'recording', 'chunks': [],
                                    'dropped_packets': 0, 'transcription': {'state': 'not_started'}}
+            if session.get('association_id'):
+                self.manifests[sid].update(history_session_id=session['history_session_id'],
+                                           association_id=session['association_id'])
             self._persist(sid)
         return self.manifests[sid]
 
@@ -223,11 +232,44 @@ class SessionRecordings:
         with self.lock:
             value = deepcopy(self.manifests.get(str(sid), {'session_id': str(sid), 'state': 'empty',
                                                            'chunks': [], 'transcription': {'state': 'not_started'}}))
+            value.pop('association_id', None)
             value['writer_error'] = self.writer_error
             value['recovery_error'] = self.recovery_errors.get(str(sid), '')
             value['dropped_packets'] = self.dropped.get(str(sid), value.get('dropped_packets', 0))
             path = self._directory(sid) / 'transcript.json'
-            value['transcript'] = json.loads(path.read_text(encoding='utf-8')) if path.exists() else None
+            value['transcript_error'] = ''
+            try:
+                value['transcript'] = json.loads(path.read_text(encoding='utf-8')) if path.exists() else None
+            except (OSError, json.JSONDecodeError, TypeError):
+                value['transcript'] = None
+                value['transcript_error'] = '转写文件损坏或不可读'
+            return value
+
+    def package_snapshot(self, sid):
+        sid = str(sid)
+        with self.lock:
+            value = self.snapshot(sid)
+            manifest = self.manifests.get(sid)
+            value['_association'] = ({'history_session_id': manifest.get('history_session_id'),
+                                      'association_id': manifest.get('association_id')}
+                                     if manifest else None)
+            path = self._directory(sid) / 'realtime.jsonl'
+            events, errors = [], 0
+            if path.exists():
+                try:
+                    for line in path.read_text(encoding='utf-8').splitlines():
+                        try:
+                            event = json.loads(line)
+                            if isinstance(event, dict):
+                                events.append(event)
+                            else:
+                                errors += 1
+                        except (json.JSONDecodeError, TypeError):
+                            errors += 1
+                except OSError:
+                    errors += 1
+            value['_realtime'] = events
+            value['_realtime_errors'] = errors
             return value
 
     def audio_path(self, sid, filename):

@@ -15,6 +15,8 @@ from interview_copilot.services.cancellation import CancellationToken
 from interview_copilot.services.answer_content import ANSWER_TIMING_FIELDS, parse_answer
 from interview_copilot.services.dialogue import context_excerpt, question_context
 
+_REVIEW_CONTEXT_STATES = {None, "matched", "corrected"}
+
 
 @dataclass(frozen=True, slots=True)
 class TaskContext:
@@ -52,12 +54,16 @@ class TurnSnapshot:
     answers: tuple[AnswerSnapshot, ...]
     dialogue: dict = field(default_factory=dict)
     revisions: tuple[dict, ...] = ()
+    review: dict = field(default_factory=dict)
 
     def revision_record(self) -> dict:
         quick = next((answer for answer in self.answers if answer.kind == "quick"), None)
-        return {"question": self.question,
-                "answer": quick.content if quick else self.quick,
-                "answer_status": quick.status if quick else "pending"}
+        prior = {"question": self.question,
+                 "answer": quick.content if quick else self.quick,
+                 "answer_status": quick.status if quick else "pending"}
+        if self.review:
+            prior["speech_review"] = deepcopy(self.review)
+        return prior
 
 
 @dataclass
@@ -93,6 +99,30 @@ class _Turn:
     dialogue: dict = field(default_factory=dict)
     candidate_speech: str = ""
     revisions: tuple[dict, ...] = ()
+    review: dict = field(default_factory=dict)
+
+    @property
+    def usable_context(self):
+        return (self.review.get("status") in _REVIEW_CONTEXT_STATES
+                and not self.dialogue.get("unverified_referent"))
+
+
+def _turn_dialogue(question, previous):
+    if not previous:
+        return question_context(question)
+    turn_id, turn = previous
+    if turn.usable_context:
+        return question_context(question, turn.dialogue)
+    anchor = question_context(turn.question)
+    dialogue = question_context(question)
+    if question_context(question, anchor)["referent_question"]:
+        dialogue["unverified_referent"] = deepcopy(turn.dialogue.get("unverified_referent")) or {
+            "turn_id": turn_id.value,
+            "source": "interviewer_asr",
+            "review_status": turn.review["status"],
+            "question": context_excerpt(turn.question),
+        }
+    return dialogue
 
 
 @dataclass
@@ -123,7 +153,7 @@ class SessionManager:
             self._sessions[session_id] = _Session(SessionState(session_id=session_id))
 
     def start_turn(
-        self, session_id: SessionId, question: str, *, turn_id: TurnId | None = None
+        self, session_id: SessionId, question: str, *, turn_id: TurnId | None = None, review=None
     ) -> TaskContext:
         if not isinstance(question, str) or not question.strip():
             raise ValueError("question must not be empty")
@@ -136,10 +166,10 @@ class SessionManager:
                 if task.context.kind in {"quick", "enrichment"}:
                     self._cancel_task(session, task)
             generation = session.state.start_turn(turn_id)
-            previous = next(reversed(session.turns.values()), None) if session.turns else None
-            dialogue = question_context(question.strip(), previous.dialogue if previous else None)
+            previous = next(reversed(session.turns.items()), None)
+            dialogue = _turn_dialogue(question.strip(), previous)
             dialogue["interviewer_background"] = list(session.background)
-            session.turns[turn_id] = _Turn(question.strip(), generation, dialogue=dialogue)
+            session.turns[turn_id] = _Turn(question.strip(), generation, dialogue=dialogue, review=deepcopy(review or {}))
             session.state.append_history(Question(session_id, turn_id, question.strip(), ()))
             session.state.set_current_answer(None)
             return self.start_task(session_id, turn_id, "quick")
@@ -166,26 +196,45 @@ class SessionManager:
                 turn.answers[(kind, key)] = _Answer(context)
             return context
 
-    def revise_turn(self, session_id: SessionId, turn_id: TurnId, question: str) -> TaskContext:
+    def revise_turn(self, session_id: SessionId, turn_id: TurnId, question: str, *, review=None,
+                    previous_record=None) -> TaskContext:
         if not isinstance(question,str) or not question.strip():
             raise ValueError("question must not be empty")
         with self._lock:
             session = self._sessions[session_id]
             if session.state.active_turn_id != turn_id:
                 raise ValueError("only the active turn can be revised")
-            archived = self.turn(session_id, turn_id).revision_record()
+            archived = (deepcopy(previous_record) if previous_record is not None
+                        else self.turn(session_id, turn_id).revision_record())
             for task in session.state.task_registry.values():
                 if task.context.turn_id == turn_id:
                     self._cancel_task(session,task)
             generation = session.state.revise_active_turn(turn_id,question.strip())
             previous = session.turns[turn_id]
-            earlier = [turn for key, turn in session.turns.items() if key != turn_id]
-            dialogue = question_context(question.strip(), earlier[-1].dialogue if earlier else None)
+            earlier = next((item for item in reversed(session.turns.items()) if item[0] != turn_id), None)
+            dialogue = _turn_dialogue(question.strip(), earlier)
             dialogue["interviewer_background"] = list(previous.dialogue.get("interviewer_background", []))
             session.turns[turn_id] = _Turn(question.strip(),generation,at=previous.at,
                                          dialogue=dialogue,candidate_speech=previous.candidate_speech,
-                                         revisions=previous.revisions + (archived,))
+                                         revisions=previous.revisions + (archived,), review=deepcopy(review or {}))
             return self.start_task(session_id,turn_id,"quick")
+
+    def set_review(self, context: TaskContext, review: dict) -> bool:
+        with self._lock:
+            session = self._sessions.get(context.session_id)
+            turn = session.turns.get(context.turn_id) if session else None
+            if not turn or turn.generation != context.generation or turn.review.get("status") not in {"pending", "queued"}:
+                return False
+            turn.review = deepcopy(review)
+            return True
+
+    def review_is_current(self, context: TaskContext, *, status="pending") -> bool:
+        with self._lock:
+            session = self._sessions.get(context.session_id)
+            if not session or session.state.active_turn_id != context.turn_id:
+                return False
+            turn = session.turns[context.turn_id]
+            return turn.generation == context.generation and turn.review.get("status") == status
 
     def note_background(self, session_id: SessionId, text: str) -> None:
         with self._lock:
@@ -210,9 +259,12 @@ class SessionManager:
                 return {}
             result, speech = deepcopy(turn.dialogue), []
             for turn_id, previous in session.turns.items():
+                if previous.dialogue.get("topic_switch"):
+                    speech.clear()
                 if turn_id == context.turn_id and context.kind == "quick":
                     break
-                if previous.candidate_speech:
+                if previous.candidate_speech and (turn_id == context.turn_id or
+                        (previous.usable_context and not result.get("unverified_referent"))):
                     speech.append({"turn_id": turn_id.value, "kind": "candidate_self_report",
                                    "question": context_excerpt(previous.question),
                                    "text": previous.candidate_speech[-600:],
@@ -221,6 +273,18 @@ class SessionManager:
                     break
             result["candidate_turns"] = speech[-2:]
             return result
+
+    def requires_scoped_speech(self, context: TaskContext) -> bool:
+        """Exclude the unscoped microphone buffer after a topic or trust boundary."""
+        with self._lock:
+            for turn_id, turn in self._sessions[context.session_id].turns.items():
+                if turn.dialogue.get("topic_switch"):
+                    return True
+                if turn_id == context.turn_id:
+                    return context.kind != "quick" and not turn.usable_context
+                if not turn.usable_context:
+                    return True
+            return False
 
     def _active_task(self, context: TaskContext) -> _Task | None:
         session = self._sessions.get(context.session_id)
@@ -381,7 +445,7 @@ class SessionManager:
             return TurnSnapshot(turn_id, turn.generation, turn.question, turn.quick,
                                 tuple(turn.details.items()), turn.enrichment, turn.status,
                                 turn.at, tuple(answer.snapshot() for answer in turn.answers.values()),
-                                deepcopy(turn.dialogue), deepcopy(turn.revisions))
+                                deepcopy(turn.dialogue), deepcopy(turn.revisions), deepcopy(turn.review))
 
     def active_turn(self, session_id: SessionId) -> TurnSnapshot | None:
         with self._lock:
@@ -397,12 +461,17 @@ class SessionManager:
             session = self._sessions.get(context.session_id)
             if session is None or context.turn_id not in session.turns:
                 return ()
+            current = session.turns[context.turn_id]
+            if current.dialogue.get("unverified_referent"):
+                return (("user", current.question),)
             result = []
             for turn_id, turn in session.turns.items():
+                if turn.dialogue.get("topic_switch"):
+                    result.clear()
                 if turn_id == context.turn_id:
                     result.append(("user", turn.question))
                     break
-                if turn.quick or turn.revisions:
+                if turn.usable_context and (turn.quick or turn.revisions):
                     result.append(("user", turn.question))
                     if turn.quick:
                         result.append(("assistant", turn.quick))

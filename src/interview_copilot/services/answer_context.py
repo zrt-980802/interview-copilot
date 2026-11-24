@@ -83,7 +83,8 @@ def scope_reference(question, reference):
     scope["reference_policy"] = "optional_references" if evidence else "model_knowledge"
     reference["answer_scope"] = scope
     reference["fact_contract"] = fact_contract(question, reference)
-    reference["reasoning_contract"] = reasoning_contract(question)
+    reference["reasoning_contract"] = reasoning_contract(question,
+        referent=dialogue.get("referent_question", ""))
     if scope["mode"] in {"technical","design"}:
         reference["resume"] = ""
         if not reference.get("evidence"):
@@ -91,11 +92,12 @@ def scope_reference(question, reference):
     return reference
 
 
-def clarification_for(history: list[dict], candidate_speech: str = "") -> str | None:
+def clarification_for(history: list[dict], candidate_speech: str = "", *, unverified_referent=False) -> str | None:
     """Handle only standalone deictic questions with no conversational referent."""
-    if not history or history[-1].get("role") != "user" or candidate_speech.strip():
+    if not history or history[-1].get("role") != "user":
         return None
-    if any(message.get("content", "").strip() for message in history[:-1]):
+    if not unverified_referent and (candidate_speech.strip()
+            or any(message.get("content", "").strip() for message in history[:-1])):
         return None
     question = re.sub(r"\s+", "", history[-1].get("content", "")).rstrip("?？。!！")
     if re.fullmatch(
@@ -103,7 +105,8 @@ def clarification_for(history: list[dict], candidate_speech: str = "") -> str | 
         r"|(?:这个|这套|该)(?:方案|设计|做法)(?:有什么问题|有啥问题|有什么缺点|为什么可行)"
         r"|(?:它|这个|这)(?:的)?(?:边界|风险|问题)(?:呢|是什么|有哪些)?)", question
     ):
-        return "【开口】你指的是哪种具体做法或方案？"
+        return ("【开口】你指的是上一题里的哪一步或做法？" if unverified_referent
+                else "【开口】你指的是哪种具体做法或方案？")
     return None
 
 

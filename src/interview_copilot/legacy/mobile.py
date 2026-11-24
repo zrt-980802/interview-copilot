@@ -15,7 +15,8 @@ from interview_copilot.services.mobile_access import PairingError
 
 COOKIE = "copilot_viewer"
 _EVENT_FIELDS = {
-    "answer_start": ("question", "at", "revision_count"), "detail_start": ("direction", "at"),
+    "answer_start": ("question", "at", "revision_count", "review_status"),
+    "speech_review": ("review_status",), "detail_start": ("direction", "at"),
     "answer_attempt": ("attempt", "model"), "answer_delta": ("attempt", "delta"),
     "answer_done": ("attempt", "full", "document"), "answer_error": ("attempt",),
     "answer_cancelled": (), "capture_state": ("capture",), "session_reset": (),

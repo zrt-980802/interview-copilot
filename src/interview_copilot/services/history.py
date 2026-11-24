@@ -6,6 +6,7 @@ from pathlib import Path
 import json
 import math
 import queue
+import re
 import sqlite3
 import threading
 import time
@@ -39,8 +40,16 @@ CREATE TABLE IF NOT EXISTS answer_documents(
  PRIMARY KEY(turn_id,level,detail_id));
 CREATE TABLE IF NOT EXISTS turn_revisions(
  id INTEGER PRIMARY KEY, turn_id INTEGER NOT NULL REFERENCES turns(id),
- question TEXT NOT NULL, answer TEXT NOT NULL, answer_status TEXT NOT NULL);
+ question TEXT NOT NULL, answer TEXT NOT NULL, answer_status TEXT NOT NULL, review_json TEXT);
 CREATE INDEX IF NOT EXISTS idx_turn_revisions_turn ON turn_revisions(turn_id);
+CREATE TABLE IF NOT EXISTS speech_reviews(
+ turn_id INTEGER PRIMARY KEY REFERENCES turns(id), result_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS recording_links(
+ history_session_id INTEGER PRIMARY KEY REFERENCES sessions(id),
+ recording_session_id TEXT NOT NULL UNIQUE,
+ association_id TEXT NOT NULL UNIQUE,
+ enabled_at_start INTEGER NOT NULL,
+ created_at TEXT NOT NULL);
 """
 
 
@@ -62,6 +71,9 @@ class _Writer(threading.Thread):
                 with closing(sqlite3.connect(backup)) as destination:
                     conn.backup(destination)
             conn.executescript(SCHEMA)
+            columns = {column[1] for column in conn.execute("PRAGMA table_info(turn_revisions)")}
+            if "review_json" not in columns:
+                conn.execute("ALTER TABLE turn_revisions ADD COLUMN review_json TEXT")
             conn.commit()
         except Exception as exc:
             self.owner._failed(exc)
@@ -119,21 +131,34 @@ class _Writer(threading.Thread):
                     _Writer._document(conn, data, "quick")
                 elif kind == "turn_revise":
                     prior = data.get("previous") or {}
-                    conn.execute("""INSERT INTO turn_revisions(turn_id,question,answer,answer_status)
+                    review = prior.get("speech_review")
+                    conn.execute("""INSERT INTO turn_revisions(turn_id,question,answer,answer_status,review_json)
                                   SELECT id,question,coalesce(?,quick_card,''),
-                                  coalesce(?,CASE WHEN quick_card IS NULL THEN 'pending' ELSE 'complete' END)
+                                  coalesce(?,CASE WHEN quick_card IS NULL THEN 'pending' ELSE 'complete' END),?
                                   FROM turns WHERE id=?""",
-                                 (prior.get("answer"), prior.get("answer_status"), data["turn_id"]))
+                                 (prior.get("answer"), prior.get("answer_status"),
+                                  json.dumps(review, ensure_ascii=False) if review else None, data["turn_id"]))
                     conn.execute("UPDATE turns SET question=?,quick_card=NULL,quick_ms=NULL WHERE id=?",
                                  (data["question"],data["turn_id"]))
                     conn.execute("DELETE FROM details WHERE turn_id=?",(data["turn_id"],))
                     conn.execute("DELETE FROM answer_documents WHERE turn_id=?",(data["turn_id"],))
+                    conn.execute("DELETE FROM speech_reviews WHERE turn_id=?", (data["turn_id"],))
+                    if data.get("review"):
+                        _Writer._speech_review(conn, data["turn_id"], data["review"])
+                elif kind == "speech_review":
+                    _Writer._speech_review(conn, data["turn_id"], data["review"])
                 elif kind == "detail":
                     cursor = conn.execute("INSERT INTO details(turn_id,direction,content,ts) VALUES(?,?,?,?)",
                                           (data["turn_id"], data["direction"], data["content"], data["ts"]))
                     _Writer._document(conn, data, "detail", cursor.lastrowid)
                 elif kind == "session_end":
                     conn.execute("UPDATE sessions SET end_at=? WHERE id=?", (data["end_at"], data["session_id"]))
+                elif kind == "recording_link":
+                    conn.execute("""INSERT INTO recording_links(
+                                 history_session_id,recording_session_id,association_id,enabled_at_start,created_at)
+                                 VALUES(?,?,?,?,?)""",
+                                 (data["history_session_id"], data["recording_session_id"], data["association_id"],
+                                  int(data["enabled_at_start"]), data["created_at"]))
             conn.commit()
         except Exception:
             conn.rollback()
@@ -142,6 +167,11 @@ class _Writer(threading.Thread):
                     data.pop("turn_id", None)
                 data.pop("result", None)
             raise
+
+    @staticmethod
+    def _speech_review(conn, turn_id, review):
+        conn.execute("INSERT OR REPLACE INTO speech_reviews VALUES(?,?)",
+                     (turn_id, json.dumps(review, ensure_ascii=False)))
 
     @staticmethod
     def _document(conn, data, level, detail_id=0):
@@ -260,9 +290,14 @@ class HistoryStore:
             self._submit("turn_quick", {"turn_id": turn_id, "quick_card": quick_card, "quick_ms": round(quick_ms, 0),
                                         **self._record(document, task_id, attempt, model)})
 
-    def turn_revise(self, turn_id, question, *, previous=None):
+    def turn_revise(self, turn_id, question, *, previous=None, review=None):
         if turn_id is not None:
-            self._submit("turn_revise", {"turn_id": turn_id, "question": question, "previous": previous}, wait=True)
+            self._submit("turn_revise", {"turn_id": turn_id, "question": question, "previous": previous,
+                                         "review": review}, wait=True)
+
+    def turn_review(self, turn_id, review):
+        if turn_id is not None:
+            self._submit("speech_review", {"turn_id": turn_id, "review": review})
 
     def detail_add(self, turn_id, direction, content, *, document=None, task_id="", attempt=0, model=""):
         if turn_id is not None:
@@ -281,6 +316,44 @@ class HistoryStore:
         sid = self.session_id if session_id is None else session_id
         if sid is not None:
             self._submit("session_end", {"session_id": sid, "end_at": time.strftime("%Y-%m-%d %H:%M:%S")})
+
+    def link_recording(self, recording_session_id, association_id, enabled_at_start, *, session_id=None):
+        sid = self.session_id if session_id is None else session_id
+        if (type(sid) is not int or sid < 1 or not isinstance(recording_session_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", recording_session_id)
+                or not isinstance(association_id, str) or len(association_id) != 32
+                or any(character not in "0123456789abcdef" for character in association_id)
+                or type(enabled_at_start) is not bool):
+            raise ValueError("recording association is invalid")
+        self._submit("recording_link", {
+            "history_session_id": sid,
+            "recording_session_id": recording_session_id,
+            "association_id": association_id,
+            "enabled_at_start": enabled_at_start,
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }, wait=True)
+
+    def recording_link(self, sid):
+        with closing(self._conn()) as conn:
+            row = conn.execute("""SELECT history_session_id,recording_session_id,association_id,
+                                  enabled_at_start,created_at FROM recording_links
+                                  WHERE history_session_id=?""", (sid,)).fetchone()
+        if row is None:
+            return None
+        return {"history_session_id": row[0], "recording_session_id": row[1],
+                "association_id": row[2], "enabled_at_start": bool(row[3]), "created_at": row[4]}
+
+    def get_events(self, sid):
+        with closing(self._conn()) as conn:
+            rows = conn.execute("SELECT ts,type,payload FROM events WHERE session_id=? ORDER BY id", (sid,)).fetchall()
+        events = []
+        for ts, event_type, payload in rows:
+            try:
+                value = json.loads(payload) if payload else {}
+            except (json.JSONDecodeError, TypeError):
+                value = {}
+            events.append({"ts": ts, "type": event_type, "payload": value if isinstance(value, dict) else {}})
+        return events
 
     def flush(self):
         self._submit("flush", {}, wait=True)
@@ -380,11 +453,16 @@ class HistoryStore:
                 by_turn.setdefault(tid, []).append({"id": did, "direction": direction, "content": content, "ts": ts,
                                                    **self._restore_record(documents.get((tid, "detail", did)), content, "detail")})
             revisions = {}
-            for tid, question, answer, status in conn.execute("""
-                SELECT r.turn_id,r.question,r.answer,r.answer_status FROM turn_revisions r
+            for tid, question, answer, status, review in conn.execute("""
+                SELECT r.turn_id,r.question,r.answer,r.answer_status,r.review_json FROM turn_revisions r
                 JOIN turns t ON r.turn_id=t.id WHERE t.session_id=? ORDER BY r.id
             """, (sid,)):
-                revisions.setdefault(tid, []).append({"question": question, "answer": answer, "answer_status": status})
+                previous = {"question": question, "answer": answer, "answer_status": status}
+                if review:
+                    previous["speech_review"] = json.loads(review)
+                revisions.setdefault(tid, []).append(previous)
+            reviews = dict(conn.execute("""SELECT r.turn_id,r.result_json FROM speech_reviews r
+                                        JOIN turns t ON r.turn_id=t.id WHERE t.session_id=?""", (sid,)))
             turns = []
             for tid, ts, question, context, quick, ms in conn.execute(
                     "SELECT id,ts,question,self_context,quick_card,quick_ms FROM turns WHERE session_id=? ORDER BY id", (sid,)).fetchall():
@@ -392,5 +470,6 @@ class HistoryStore:
                 turns.append({"id": tid, "ts": ts, "question": question, "self_context": context,
                               "quick_card": quick, "quick_ms": ms, "details": by_turn.get(tid, []),
                               "quick_document": record["document"], "quick_document_status": record["document_status"],
-                              "quick_meta": record["meta"], "revisions": revisions.get(tid, [])})
+                              "quick_meta": record["meta"], "revisions": revisions.get(tid, []),
+                              "speech_review": json.loads(reviews[tid]) if tid in reviews else {}})
         return {"id": row[0], "started_at": row[1], "title": row[2], "end_at": row[3], "turns": turns}

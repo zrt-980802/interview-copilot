@@ -23,6 +23,7 @@ import time
 from copy import deepcopy
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from typing import NamedTuple
 from uuid import uuid4
 
 from fastapi import FastAPI, UploadFile, File, Form, Request, Query
@@ -30,6 +31,7 @@ from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
+from starlette.background import BackgroundTask
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
@@ -41,6 +43,8 @@ from interview_copilot.services.event_stream import ReplayEventHub, Subscription
 from interview_copilot.legacy.uploads import saved_upload, UploadTooLarge
 from interview_copilot.services.history import HistoryError, HistoryStore
 from interview_copilot.services.workers import WorkerGroup
+from interview_copilot.services.speech_review import ReviewAudio
+from interview_copilot.services.speech_review_worker import run_review
 from interview_copilot.services.corpus import CorpusIndex, source_settings
 from interview_copilot.services.mobile_access import MobileAccess
 from interview_copilot.services.history_export import export_session
@@ -54,6 +58,7 @@ from interview_copilot.services.remote_documents import download_github
 from interview_copilot.services.provider_settings import ProviderSettings, ProviderSettingsError, probe_provider
 from interview_copilot.services.recording_settings import RecordingSettings
 from interview_copilot.services.recordings import SessionRecordings
+from interview_copilot.services.session_package import SessionPackageError, SessionPackageExporter
 from interview_copilot.legacy.mobile import create_mobile_app
 
 from copilot.audio import AudioEngine, list_output_devices, list_input_devices  # noqa: E402
@@ -66,6 +71,7 @@ from copilot import materials as mat_store                                     #
 CFG = {}
 MERGE_WAIT_MS = 1100
 CONTINUATION_MS = 8000
+REVIEW_MAX_QUEUE_SECONDS = 2.0
 
 
 @asynccontextmanager
@@ -129,6 +135,15 @@ SESSIONS = SessionManager()
 _RESUME_LOCK = threading.Lock()
 
 
+def _begin_recording_session(runtime, history_session_id, session_id):
+    association_id = uuid4().hex
+    enabled = runtime.recording_settings.public()['enabled']
+    history_store.link_recording(str(session_id), association_id, enabled,
+                                 session_id=history_session_id)
+    runtime.recordings.begin(str(session_id), history_session_id=history_session_id,
+                             association_id=association_id)
+
+
 def _prefetch_enrichment(question: str, context: TaskContext):
     """发散信号 → 后台采知识库/网络，完成后广播 enrich_ready（不阻塞主链路）。"""
     if not divergent._classify(question):
@@ -183,7 +198,7 @@ def answer_evidence(question: str, *, detail=False, dialogue=None) -> list[dict]
     _RUNTIME.library.sync_index()
     budget = CFG.get("corpus", {}).get("detail_budget_chars" if detail else "quick_budget_chars",
                                        4000 if detail else 2400)
-    queries = evidence_queries(question, dialogue)
+    queries = evidence_queries(question, dialogue, detail=detail)
     rankings = [index.search(query, budget=budget, limit=5 if detail else 3) for query in queries]
     retrieved, seen = [], set()
     for position in range(max(map(len, rankings), default=0)):
@@ -498,6 +513,8 @@ def spawn_quick(question: str, context: TaskContext, self_recent: str = ""):
     callbacks = _callbacks(context, started)
     token = sessions.cancellation(context)
     dialogue = sessions.dialogue(context)
+    if sessions.requires_scoped_speech(context):
+        self_recent = ""
     queued_at = time.perf_counter()
 
     def work():
@@ -538,6 +555,8 @@ def spawn_detail(direction: str, turn_id: str | None = None):
         history = [{"role": role, "content": text} for role, text in SESSIONS.history(context)]
         active = SESSIONS.active_turn(_SESSION_ID)
         self_recent = self_ctx_detail() if active and turn.turn_id == active.turn_id else ""
+        if sessions.requires_scoped_speech(context):
+            self_recent = ""
         callbacks = _callbacks(context, time.time())
         token = sessions.cancellation(context)
         broadcast(_task_event(context, "detail_start", at=time.strftime("%H:%M:%S")))
@@ -576,19 +595,22 @@ def spawn_detail(direction: str, turn_id: str | None = None):
     return context
 
 
-def _start_question(question: str, manual: bool):
+def _start_question(question: str, manual: bool, *, review=None):
     with _INTERVIEW_LOCK:
         _require_ready()
+        _discard_queued_review(_RUNTIME)
         SELF_TURN.on_question()
         storage_id = history_store.turn_begin(question, CONV.recent(max_chars=300),
                                               session_id=_DB_SESSION_ID)
         context = SESSIONS.start_turn(_SESSION_ID, question,
-                                     turn_id=TurnId(str(storage_id)) if storage_id else None)
+                                     turn_id=TurnId(str(storage_id)) if storage_id else None, review=review)
+        if review:
+            history_store.turn_review(storage_id, review)
         if manual:
             broadcast(_task_event(context, "question", text=question, manual=True,
                                   speaker="interviewer", at=time.strftime("%H:%M:%S")))
         broadcast(_task_event(context, "answer_start", question=question,
-                              at=time.strftime("%H:%M:%S")))
+                              at=time.strftime("%H:%M:%S"), review_status=(review or {}).get("status")))
         spawn_quick(question, context, self_ctx_quick())
         return context
 
@@ -678,7 +700,19 @@ def _commit_speech(event):
         text = previous["text"] + " " + text
         context = _revise_merged(text, previous["turn_id"])
     else:
-        context = _start_question(text, manual=False)
+        rt = _RUNTIME
+        engine = question_engine()
+        audio, status = None, None
+        if rt.review_enabled and event.get("input_generation") == engine.generation:
+            capture = getattr(engine, "review_audio", None)
+            if capture:
+                audio, status = capture(event.get("draft_id"))
+                if audio and rt.review_active:
+                    status = "queued"
+        review = {"status": status} if status else None
+        context = _start_question(text, manual=False, review=review)
+        if audio and status in {"pending", "queued"}:
+            _schedule_speech_review(rt, engine, context, audio, text)
     _RUNTIME.speech_previous = {"text": text, "turn_id": context.turn_id, "at": time.monotonic(),
                                 "draft_id": event.get("draft_id")}
 
@@ -700,22 +734,129 @@ def _pause_for_supplement(turn_id):
                     broadcast(_task_event(context,"answer_cancelled",reason="question_supplement"))
 
 
-def _revise_merged(qtext,turn_id):
+def _revise_merged(qtext,turn_id, *, review=None):
     with _INTERVIEW_LOCK:
         turn = SESSIONS.active_turn(_SESSION_ID)
         if not turn or turn.turn_id != turn_id:
             return _start_question(qtext,manual=False)
         previous = turn.revision_record()
-        history_store.turn_revise(int(turn_id.value) if turn_id.value.isdecimal() else None, qtext, previous=previous)
+        status = turn.review.get("status")
+        if status in {"pending", "queued"} and review is None:
+            previous["speech_review"] = {"status": "late", "reason": "revision_replaced"}
+            if status == "queued":
+                _RUNTIME.review_next = None
+        elif status == "pending":
+            previous.pop("speech_review", None)
+        if review is None and status not in (None, "matched", "corrected"):
+            review = {"status": "late" if status in {"pending", "queued"} else status}
+        history_store.turn_revise(int(turn_id.value) if turn_id.value.isdecimal() else None, qtext,
+                                  previous=previous, review=review)
         history_store.log_event("question_revised", {"turn_id": turn_id.value,
                                 "previous_question": turn.question, "previous_answer": previous["answer"],
                                 "question": qtext}, session_id=_DB_SESSION_ID)
-        context = SESSIONS.revise_turn(_SESSION_ID,turn_id,qtext)
+        context = SESSIONS.revise_turn(_SESSION_ID,turn_id,qtext,review=review,previous_record=previous)
         revisions = SESSIONS.turn(_SESSION_ID, turn_id).revisions
         broadcast(_task_event(context, "answer_start", question=qtext, revised=True,
-                              revisions=revisions, revision_count=len(revisions), at=time.strftime("%H:%M:%S")))
+                              revisions=revisions, revision_count=len(revisions),
+                              review_status=(review or {}).get("status"), at=time.strftime("%H:%M:%S")))
         spawn_quick(qtext,context,self_ctx_quick())
         return context
+
+
+class _SpeechReviewJob(NamedTuple):
+    engine: AudioEngine
+    input_generation: int
+    context: TaskContext
+    audio: ReviewAudio
+    original: str
+    queued_at: float
+
+
+def _review_job_current(rt, job, *, status="pending"):
+    return (_RUNTIME is rt and rt.ready and _SESSION_ID == job.context.session_id
+            and question_engine() is job.engine and job.engine.generation == job.input_generation
+            and SESSIONS.review_is_current(job.context, status=status))
+
+
+def _publish_review(context, result):
+    if not SESSIONS.set_review(context, result):
+        return False
+    if context.turn_id.value.isdecimal():
+        history_store.turn_review(int(context.turn_id.value), result)
+    broadcast(_task_event(context, "speech_review", review_status=result["status"]))
+    return True
+
+
+def _discard_queued_review(rt):
+    job, rt.review_next = rt.review_next, None
+    if job is not None:
+        _publish_review(job.context, {"status": "late", "reason": "queued_review_invalidated"})
+
+
+def _schedule_speech_review(rt, engine, context, audio, original):
+    job = _SpeechReviewJob(engine, engine.generation, context, audio, original, time.monotonic())
+    if rt.review_active:
+        rt.review_next = job
+    else:
+        _start_speech_review(rt, job)
+
+
+def _start_speech_review(rt, job):
+    context = job.context
+    queue_wait_ms = round((time.monotonic() - job.queued_at) * 1000)
+    rt.review_active = job
+
+    def finish(result, replacement):
+        with _INTERVIEW_LOCK:
+            if _RUNTIME is not rt:
+                return
+            try:
+                if not rt.ready or _SESSION_ID != context.session_id:
+                    return
+                result = {**result, "queue_wait_ms": queue_wait_ms}
+                if not _review_job_current(rt, job):
+                    _publish_review(context, {**result, "status": "late"})
+                elif replacement and result.get("status") == "corrected":
+                    revised = _revise_merged(replacement, context.turn_id, review=result)
+                    previous = rt.speech_previous
+                    if previous and previous["turn_id"] == revised.turn_id:
+                        previous["text"] = replacement
+                else:
+                    _publish_review(context, result)
+            finally:
+                rt.review_active = None
+                waiting, rt.review_next = rt.review_next, None
+                if waiting and _review_job_current(rt, waiting, status="queued"):
+                    waited = time.monotonic() - waiting.queued_at
+                    if waited > REVIEW_MAX_QUEUE_SECONDS:
+                        _publish_review(waiting.context, {"status": "timed_out", "reason": "queue_wait",
+                                                          "queue_wait_ms": round(waited * 1000)})
+                    elif _publish_review(waiting.context, {"status": "pending", "queue_wait_ms": round(waited * 1000)}):
+                        _start_speech_review(rt, waiting)
+                elif waiting:
+                    _publish_review(waiting.context, {"status": "late", "reason": "queued_review_invalidated"})
+
+    def work():
+        if not _review_job_current(rt, job):
+            finish({"status": "late"}, None)
+            return
+        try:
+            result, replacement = run_review(job.audio, job.original, rt.recording_settings.runtime_python,
+                                             lambda: not _review_job_current(rt, job))
+        except Exception:
+            result, replacement = {"status": "failed"}, None
+        finish(result, replacement)
+
+    try:
+        rt.workers.start(work, name="speech-review")
+    except RuntimeError:
+        finish({"status": "failed"}, None)
+
+
+def _interrupt_speech_review(rt):
+    _discard_queued_review(rt)
+    if rt.review_active is not None:
+        _publish_review(rt.review_active.context, {"status": "late"})
 
 
 def create_engine(mode: str, audio_source=None, stt_client=None, *, factory=None, status_cb=None):
@@ -800,6 +941,8 @@ def start_runtime(config=None, *, history_factory=HistoryStore, llm_factory=None
                              providers=None, knowledge=None, retired_llms=[], llm_factory=llm_factory or LLMClient,
                              capture_devices={"loopback":None,"mic":None},
                              speech_scheduler=None, speech_models=None, speech_previous=None,
+                             review_enabled=CFG.get("speech", {}).get("review_enabled") is True,
+                             review_active=None, review_next=None,
                              audio_test_mode=False,
                              recordings=None, recording_settings=None,
                              speech_mode=CFG.get("speech", {}).get("mode", "legacy"))
@@ -844,7 +987,7 @@ def start_runtime(config=None, *, history_factory=HistoryStore, llm_factory=None
             rt.recording_settings = RecordingSettings(recording_root, local_python, CFG.get('recording'))
             rt.recordings = SessionRecordings(recording_root, rt.recording_settings)
             rt.recordings.start()
-            rt.recordings.begin(_SESSION_ID.value)
+            _begin_recording_session(rt, _DB_SESSION_ID, _SESSION_ID.value)
 
             def audio_event(**ev):
                 with _INTERVIEW_LOCK:
@@ -926,6 +1069,7 @@ def stop_runtime(timeout=10.0):
             rt.workers.stop()
             MERGER.clear()
             if _SESSION_ID is not None and not rt.tasks_ended:
+                attempt("speech review", lambda: _interrupt_speech_review(rt))
                 SESSIONS.end_session(_SESSION_ID)
                 rt.tasks_ended = True
             STATE.update(listening=False, self_listening=False)
@@ -1014,7 +1158,7 @@ async def state():
         "history_len": len(SESSIONS.turns(_SESSION_ID)),
         "session_id": _SESSION_ID.value,
         "preview": bool(getattr(app.state, "synthetic_preview", False)),
-        "speech": {"mode": _RUNTIME.speech_mode, "drafts": speech_drafts()},
+        "speech": {"mode": _RUNTIME.speech_mode, "drafts": speech_drafts(), "review_enabled": _RUNTIME.review_enabled},
         "audio_test_mode": _RUNTIME.audio_test_mode,
         "self_recent": CONV.recent(max_chars=160),
         "papers": knowledge.load_status(),
@@ -1103,6 +1247,7 @@ async def speech_mode(payload: dict):
                     scheduler.close()
                 return JSONResponse({"ok": False, "error": "切换失败，请检查本地语音模型和依赖"}, status_code=503)
             with _INTERVIEW_LOCK:
+                _interrupt_speech_review(rt)
                 rt.engines = new_engines
                 ENGINE, SELF_ENGINE = new_engines
                 rt.speech_models, rt.speech_scheduler, rt.speech_mode = models, scheduler, mode
@@ -1134,6 +1279,7 @@ async def audio_test_mode(payload: dict):
             with _INTERVIEW_LOCK:
                 ENGINE.invalidate_pending()
                 SELF_ENGINE.set_speaker_role("interviewer" if enabled else "self")
+                _interrupt_speech_review(rt)
                 rt.audio_test_mode, rt.speech_previous = enabled, None
                 MERGER.clear()
                 for speaker in ("interviewer", "self"):
@@ -1245,10 +1391,13 @@ async def stop(payload: dict | None = None):
         with _CAPTURE_LOCKS[src]:
             engine = SELF_ENGINE if src == "mic" else ENGINE
             with _INTERVIEW_LOCK:
-                if engine is question_engine():
+                is_question_source = engine is question_engine()
+                if is_question_source:
                     MERGER.clear()
                     _RUNTIME.speech_previous = None
                 engine.invalidate_pending()
+                if is_question_source:
+                    _interrupt_speech_review(_RUNTIME)
                 broadcast({"type": "speech_draft", "state": "empty", "text": "",
                            "speaker": input_speaker(src), "session_id": _SESSION_ID.value})
             r = engine.stop()
@@ -1302,6 +1451,8 @@ async def edit_speech_draft(payload: dict):
                 (not isinstance(text, str) or not 0 < len(text.strip()) <= 12000)):
             return JSONResponse({"ok": False, "error": "草稿操作或文字不正确"}, status_code=400)
         engine.invalidate_pending()
+        if engine is question_engine():
+            _interrupt_speech_review(_RUNTIME)
         broadcast({"type": "speech_draft", "state": "empty", "text": "", "speaker": payload.get("speaker"),
                    "session_id": _SESSION_ID.value})
         if action == "submit":
@@ -1343,6 +1494,7 @@ def _reset_session():
         SELF_ENGINE.invalidate_pending()
         _RUNTIME.speech_previous = None
         previous_session = _SESSION_ID.value
+        _interrupt_speech_review(_RUNTIME)
         _RUNTIME.recordings.finish(previous_session)
         SESSIONS.end_session(_SESSION_ID)
         CONV.clear()
@@ -1352,7 +1504,7 @@ def _reset_session():
         _RUNTIME.session_id = _DB_SESSION_ID
         _SESSION_ID = SessionId(str(_DB_SESSION_ID) if _DB_SESSION_ID is not None else uuid4().hex)
         SESSIONS.create_session(_SESSION_ID)
-        _RUNTIME.recordings.begin(_SESSION_ID.value)
+        _begin_recording_session(_RUNTIME, _DB_SESSION_ID, _SESSION_ID.value)
         MOBILE_ACCESS.follow_session(previous_session, _SESSION_ID.value)
         broadcast({"type": "session_reset", "session_id": _SESSION_ID.value})
         return {"ok": True, "session_id": _SESSION_ID.value, "archived_session_id": previous_session}
@@ -1495,6 +1647,52 @@ async def history_export(sid: int):
         return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
     return PlainTextResponse(md, headers={"Cache-Control": "no-store",
                                          "Content-Disposition": f'attachment; filename="interview-{sid}.md"'})
+
+
+def _package_error(error):
+    return JSONResponse({"ok": False, "error": str(error), "code": error.code},
+                        status_code=error.status, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/history/package/{sid}")
+async def history_package_preview(sid: int):
+    def read():
+        history_store.flush()
+        return SessionPackageExporter(history_store, _RUNTIME.recordings).preview(sid)
+    try:
+        value = await asyncio.to_thread(read)
+        return JSONResponse({"ok": True, "package": value}, headers={"Cache-Control": "no-store"})
+    except SessionPackageError as exc:
+        return _package_error(exc)
+    except (HistoryError, sqlite3.Error):
+        return JSONResponse({"ok": False, "error": "历史记录暂不可读，请检查存储状态"},
+                            status_code=503, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/history/package/{sid}")
+async def history_package_export(sid: int, payload: dict):
+    if set(payload) - {"include_audio", "tracks"}:
+        return JSONResponse({"ok": False, "error": "导出选项格式不正确", "code": "selection"},
+                            status_code=400, headers={"Cache-Control": "no-store"})
+
+    def build():
+        history_store.flush()
+        root = _RUNTIME.recordings.root.parent / "exports"
+        destination = root / f"interview-{sid}-{uuid4().hex}.zip"
+        return SessionPackageExporter(history_store, _RUNTIME.recordings).build(
+            sid, destination, include_audio=payload.get("include_audio", False),
+            tracks=payload.get("tracks", []))
+    try:
+        result = await asyncio.to_thread(build)
+    except SessionPackageError as exc:
+        return _package_error(exc)
+    except (HistoryError, sqlite3.Error):
+        return JSONResponse({"ok": False, "error": "历史记录暂不可读，请检查存储状态"},
+                            status_code=503, headers={"Cache-Control": "no-store"})
+    path = result["path"]
+    return FileResponse(path, media_type="application/zip", filename=f"interview-{sid}-data.zip",
+                        headers={"Cache-Control": "no-store"},
+                        background=BackgroundTask(path.unlink, missing_ok=True))
 
 
 @app.post("/api/resume/reload")
@@ -1777,6 +1975,7 @@ def session_snapshot(reason="requested"):
             turns.append({"turn_id": turn.turn_id.value, "generation": turn.generation,
                           "question": turn.question, "status": turn.status, "at": turn.at,
                           "revisions": turn.revisions, "revision_count": len(turn.revisions),
+                          "review_status": turn.review.get("status"),
                           "answers": [{"task_id": answer.task_id, "level": answer.kind,
                                        "direction": answer.key, "content": answer.content,
                                        "status": answer.status, "error": answer.error,

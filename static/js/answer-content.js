@@ -115,12 +115,40 @@ function linkCitations(body, citations, panel, compact) {
   }
 }
 
+export function speechReviewLabel(status) {
+  return ({
+    queued:'等待后台复听',
+    pending:'后台复听中',
+    matched:'复听文字一致',
+    corrected:'已按复听修正',
+    uncertain:'复听有分歧，保留首版',
+    late:'复听已中断，未自动修正',
+    timed_out:'复听超时，保留首版',
+    failed:'复听不可用，保留首版',
+    busy:'复听繁忙，保留首版',
+    audio_unavailable:'复听音频缺失，保留原题',
+    audio_budget:'复听片段超出时限，保留原题',
+    audio_weak:'复听音量过低，保留原题',
+  })[status] || '';
+}
+
+export function speechReviewEvidence(review) {
+  if (!review?.evidence?.models?.length) return null;
+  const trace = node('details', 'candidate-context');
+  trace.append(node('summary', '', '复听依据'),
+    node('p', '', review.evidence.models.join('、') + ' · ' + review.elapsed_ms + ' ms'));
+  for (const [model, key] of [['Turbo','turbo_text'], ['large-v3','large_text']]) {
+    if (review.evidence[key]) trace.append(node('div', '', model), node('pre', '', review.evidence[key]));
+  }
+  return trace;
+}
+
 export function renderRevisions(container, revisions) {
   container.hidden = !revisions.length;
   if (!revisions.length) return;
   const list = node('details', 'revision-list');
   list.open = !!container.querySelector('.revision-list[open]');
-  list.append(node('summary', '', `补充前的版本（${revisions.length}）`));
+  list.append(node('summary', '', `先前版本（${revisions.length}）`));
   revisions.forEach((revision, index) => {
     const section = node('section', 'revision-entry');
     section.append(node('div', 'revision-caption', `版本 ${index + 1} · 已被替换`),
@@ -132,6 +160,10 @@ export function renderRevisions(container, revisions) {
       renderDocument(body, draftDocument(revision.answer, 'quick'));
       section.append(body);
     }
+    const status = speechReviewLabel(revision.speech_review?.status);
+    if (status) section.append(node('div', 'turn-review-status', status));
+    const trace = speechReviewEvidence(revision.speech_review);
+    if (trace) section.append(trace);
     list.append(section);
   });
   container.replaceChildren(list);

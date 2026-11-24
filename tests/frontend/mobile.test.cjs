@@ -250,6 +250,51 @@ test('speech supplement revises one shared turn on desktop phone and history', {
   assert.deepEqual(errors,[]);
 });
 
+test('background correction preserves the first answer and projects the revised question', {skip}, async t => {
+  const {phone,computer,request,errors,pair,complete}=await fixture(t,{desktop:true});
+  await pair();
+  const first='如果可以使用缓存，你会如何防止重复处理？';
+  const corrected='如果不可以使用缓存，你会如何防止重复处理？';
+  const endpoint=desktopUrl+'/__regression__/speech-review';
+  assert.equal((await request.post(endpoint,{data:{first,corrected}})).status(),200);
+  await computer.getByText('后台复听中',{exact:true}).waitFor();
+  await phone.locator('#number').filter({hasText:'后台复听中'}).waitFor();
+  await complete(1);
+  const original=(await (await request.get(desktopUrl+'/api/session/snapshot')).json()).turns[0];
+  await request.post(endpoint,{data:{release:true}});
+  await computer.getByText('复听修正后的问题',{exact:true}).waitFor();
+  await phone.locator('#question').filter({hasText:corrected}).waitFor();
+  await phone.locator('#number').filter({hasText:'已按复听修正'}).waitFor();
+  await complete(1);
+  const state=await (await request.get(desktopUrl+'/api/session/snapshot')).json();
+  assert.equal(state.turns[0].turn_id,original.turn_id);
+  assert.equal(state.turns[0].revisions[0].answer,original.answers[0].content);
+  await computer.goto(desktopUrl+'/history?session='+state.session_id);
+  await computer.getByText('复听依据',{exact:true}).click();
+  await computer.locator('pre').filter({hasText:corrected}).waitFor();
+  assert.deepEqual(errors,[]);
+});
+
+test('a new question answers while its review waits and then gets reviewed', {skip}, async t => {
+  const {phone,computer,request,errors,pair,complete}=await fixture(t,{desktop:true});
+  await pair();
+  const endpoint=desktopUrl+'/__regression__/speech-review';
+  const first='如何分析缓存命中率？';
+  const next='下一个问题，如何检查数据库事务是否丢失？';
+  const corrected='下一个问题，如何检查数据库事务是否丢失或重复？';
+  await request.post(endpoint,{data:{draft:'old',first,corrected:'不应显示的旧复听文字'}});
+  await computer.getByText('后台复听中',{exact:true}).waitFor();
+  await request.post(endpoint,{data:{draft:'next',first:next,corrected}});
+  await computer.getByText('等待后台复听',{exact:true}).waitFor();
+  await phone.locator('#number').filter({hasText:'等待后台复听'}).waitFor();
+  await complete(2);
+  await request.post(endpoint,{data:{release:true}});
+  await phone.locator('#question').filter({hasText:corrected}).waitFor();
+  const state=await (await request.get(desktopUrl+'/api/session/snapshot')).json();
+  assert.deepEqual(state.turns.map(turn => [turn.question,turn.review_status]),[[first,'late'],[corrected,'corrected']]);
+  assert.deepEqual(errors,[]);
+});
+
 test('phone narrow screens, large type, theme and focus stay within the viewport', {skip}, async t => {
   const {phone, errors, pair, ask, complete} = await fixture(t);
   await pair(); await ask('手机阅读与布局'); await complete(1);

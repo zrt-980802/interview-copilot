@@ -57,10 +57,11 @@ def test_unauthorized_reads_and_management_routes_are_unavailable(legacy_server)
     desktop, phone = clients(legacy_server)
     for path in ("/api/snapshot", "/api/events"):
         assert phone.get(path).status_code == 401
-    for path in ("/api/ask", "/api/clear", "/api/detail", "/api/start", "/api/audio/devices/refresh", "/api/resume/upload", "/api/mobile/pairing"):
+    for path in ("/api/ask", "/api/clear", "/api/detail", "/api/start", "/api/audio/devices/refresh", "/api/resume/upload", "/api/mobile/pairing",
+                 "/api/history/package/1"):
         assert phone.post(path, json={}).status_code == 404
     for path in ("/api/state", "/history", "/files", "/api/files", "/api/files/example/download", "/static/files.html", "/static/js/files.js",
-                 "/api/history/sessions", "/api/history/session/1", "/api/history/export/1",
+                 "/api/history/sessions", "/api/history/session/1", "/api/history/export/1", "/api/history/package/1",
                  "/static/index.html", "/static/history.html", "/static/js/history.js", "/openapi.json", "/docs", "/assets/server.py"):
         assert phone.get(path).status_code == 404
     assert phone.get("/").status_code == 200
