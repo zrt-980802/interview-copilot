@@ -316,6 +316,20 @@ def dbfs(chunk: np.ndarray) -> float:
     return max(-100.0, 20.0 * float(np.log10(rms)))
 
 
+def _calibration_threshold(levels: np.ndarray, percentile: int, mode: str,
+                           abs_floor: float, offset: float) -> dict:
+    measured_floor = float(np.percentile(levels, percentile))
+    measured_p90 = float(np.percentile(levels, 90))
+    effective_floor = min(measured_floor, -62.0) if mode == "mic" else measured_floor
+    enter = max(abs_floor + 4.0, effective_floor + offset)
+    return {
+        "measured_floor": measured_floor,
+        "measured_p90": measured_p90,
+        "effective_floor": effective_floor,
+        "enter": enter,
+    }
+
+
 # ================= 引擎 =================
 
 class AudioEngine:
@@ -365,6 +379,10 @@ class AudioEngine:
             "last_level_db": -100.0,
             "noise_floor_db": -70.0,
             "speech_enter_db": -45.0,
+            "calibration_measured_floor_db": None,
+            "calibration_p90_db": None,
+            "calibration_contrast_db": None,
+            "calibration_adjustment_db": None,
             "speaking": False,
             "buffered_ms": 0,
         }
@@ -673,19 +691,27 @@ class AudioEngine:
                 if time.time() > calib_deadline:
                     arr = np.array([l for _, l in calib_frames])
                     pct = 10 if len(calib_frames) > 40 else 25
-                    self.noise_floor_db = float(np.percentile(arr, pct))
-                    # 双保险：mic 自述通道触发阈值硬顶到 -50dB 以下，
-                    # 防止校准窗内人声污染导致阈值高到漏掉正常说话
-                    if self.mode == "mic":
-                        self.noise_floor_db = min(self.noise_floor_db, -62.0)
-                    self.speech_enter_db = max(abs_floor + 4.0,
-                                               self.noise_floor_db + offset)
+                    calibration = _calibration_threshold(arr, pct, self.mode, abs_floor, offset)
+                    measured_floor = calibration["measured_floor"]
+                    measured_p90 = calibration["measured_p90"]
+                    self.noise_floor_db = calibration["effective_floor"]
+                    self.speech_enter_db = calibration["enter"]
                     self.stats["noise_floor_db"] = round(self.noise_floor_db, 1)
                     self.stats["speech_enter_db"] = round(self.speech_enter_db, 1)
+                    self.stats["calibration_measured_floor_db"] = round(measured_floor, 1)
+                    self.stats["calibration_p90_db"] = round(measured_p90, 1)
+                    self.stats["calibration_contrast_db"] = round(measured_p90 - measured_floor, 1)
+                    self.stats["calibration_adjustment_db"] = round(
+                        measured_floor - self.noise_floor_db, 1
+                    )
                     calibrated = True
                     self.status_cb(type="calibrated",
                                    noise_floor=round(self.noise_floor_db, 1),
-                                   enter=round(self.speech_enter_db, 1))
+                                   enter=round(self.speech_enter_db, 1),
+                                   measured_floor=round(measured_floor, 1),
+                                   p90=round(measured_p90, 1),
+                                   contrast=round(measured_p90 - measured_floor, 1),
+                                   adjustment=round(measured_floor - self.noise_floor_db, 1))
                     replay = calib_frames[:]
                     calib_frames.clear()
                     for ch, _l in replay:
@@ -776,21 +802,27 @@ class AudioEngine:
                 text = result.text
                 if self._stop_flag.is_set() or segment_generation != self._generation:
                     return
-                if text:
-                    signal = audio_signal(samples)
-                    issue = recognition_issue(result, signal)
-                    if issue:
-                        self.stats["rejected_" + issue] = self.stats.get("rejected_" + issue,0) + 1
-                        self.status_cb(type="stt_rejected",reason=issue,text=text[:320],speaker=self.speaker_tag,signal=signal)
-                        return
-                    self.stats["segments"] += 1
-                    self.status_cb(type="question", text=text,
-                                   at=time.strftime("%H:%M:%S"),
+                signal = audio_signal(samples)
+                if not text.strip():
+                    self.stats["rejected_empty_transcript"] = self.stats.get("rejected_empty_transcript", 0) + 1
+                    self.status_cb(type="stt_rejected", reason="empty_transcript", text="",
+                                   speaker=self.speaker_tag, signal=signal,
                                    segment_seq=segment_seq,
-                                   input_generation=segment_generation,
-                                   duration_ms=round(len(samples) * 1000 / self.sample_rate),
-                                   level_db=round(dbfs(samples),1),
-                                   speaker=self.speaker_tag)
+                                   duration_ms=round(len(samples) * 1000 / self.sample_rate))
+                    return
+                issue = recognition_issue(result, signal)
+                if issue:
+                    self.stats["rejected_" + issue] = self.stats.get("rejected_" + issue,0) + 1
+                    self.status_cb(type="stt_rejected",reason=issue,text=text[:320],speaker=self.speaker_tag,signal=signal)
+                    return
+                self.stats["segments"] += 1
+                self.status_cb(type="question", text=text,
+                               at=time.strftime("%H:%M:%S"),
+                               segment_seq=segment_seq,
+                               input_generation=segment_generation,
+                               duration_ms=round(len(samples) * 1000 / self.sample_rate),
+                               level_db=round(dbfs(samples),1),
+                               speaker=self.speaker_tag)
                 return
             except Exception as e:
                 self.last_error = f"STT 请求失败: {e}"

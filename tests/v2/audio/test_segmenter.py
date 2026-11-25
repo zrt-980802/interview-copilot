@@ -210,6 +210,10 @@ def test_mic_mode_applies_legacy_threshold_adjustments() -> None:
     # mic: abs_floor min -60, offset max(4, 11*0.4)=4.4, calibrated floor <= -62
     assert mc["noise_floor_db"] == -62.0
     assert mc["speech_enter_db"] == -56.0
+    assert mc["calibration_measured_floor_db"] == pytest.approx(SPEECH_DB, abs=0.05)
+    assert mc["calibration_p90_db"] == pytest.approx(SPEECH_DB, abs=0.05)
+    assert mc["calibration_contrast_db"] == pytest.approx(0.0, abs=0.05)
+    assert mc["calibration_adjustment_db"] == pytest.approx(56.0, abs=0.1)
 
 
 def test_resamples_and_mixes_multichannel_input() -> None:

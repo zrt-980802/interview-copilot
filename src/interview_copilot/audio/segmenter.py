@@ -147,6 +147,8 @@ class Segmenter:
         self._calib_frames: list[tuple[np.ndarray, float]] = []
         self._noise_floor_db = float(cfg.initial_noise_floor_db)
         self._speech_enter_db = float(cfg.initial_speech_enter_db)
+        self._calibration_measured_floor_db: float | None = None
+        self._calibration_p90_db: float | None = None
         self._segment_seq = 0
         self._last_level_db = -100.0
         self._speaking = False
@@ -186,6 +188,22 @@ class Segmenter:
             "calibrated": self._calibrated,
             "noise_floor_db": round(self._noise_floor_db, 1),
             "speech_enter_db": round(self._speech_enter_db, 1),
+            "calibration_measured_floor_db": (
+                None if self._calibration_measured_floor_db is None
+                else round(self._calibration_measured_floor_db, 1)
+            ),
+            "calibration_p90_db": (
+                None if self._calibration_p90_db is None
+                else round(self._calibration_p90_db, 1)
+            ),
+            "calibration_contrast_db": (
+                None if self._calibration_measured_floor_db is None
+                else round(self._calibration_p90_db - self._calibration_measured_floor_db, 1)
+            ),
+            "calibration_adjustment_db": (
+                None if self._calibration_measured_floor_db is None
+                else round(self._calibration_measured_floor_db - self._noise_floor_db, 1)
+            ),
             "last_level_db": self._last_level_db,
             "speaking": self._speaking,
             "buffered_ms": self._ring_ms,
@@ -214,7 +232,9 @@ class Segmenter:
         levels = np.array([lvl for _, lvl in self._calib_frames])
         # Legacy P1-4 v3: P10 once enough frames, else P25; never wait for quiet.
         percentile = 10 if levels.size > 40 else 25
-        self._noise_floor_db = float(np.percentile(levels, percentile))
+        self._calibration_measured_floor_db = float(np.percentile(levels, percentile))
+        self._calibration_p90_db = float(np.percentile(levels, 90))
+        self._noise_floor_db = self._calibration_measured_floor_db
         if self._mode == "mic":  # legacy double-guard against voice pollution
             self._noise_floor_db = min(self._noise_floor_db, -62.0)
         self._speech_enter_db = max(self._abs_floor + 4.0, self._noise_floor_db + self._offset)
